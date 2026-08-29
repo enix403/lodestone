@@ -66,6 +66,37 @@ enum Cmd {
     /// Bring remote changes down; aborts if there are local changes to send up
     Pull(SyncArgs),
 
+    /// Configure a new folder and establish its baseline
+    Add {
+        /// Short name, used in commands and as the state directory name
+        name: String,
+
+        /// Local directory (created if absent). Paths under $HOME are stored as ~/...
+        #[arg(long, value_name = "PATH")]
+        local: String,
+
+        /// rclone remote and path, e.g. per-gdrive:Silvermine
+        #[arg(long, value_name = "REMOTE:PATH")]
+        remote: String,
+
+        /// Override the true-delete ceiling for this folder
+        #[arg(long, value_name = "N")]
+        max_deletes: Option<usize>,
+
+        /// Write the config entry but do not establish the baseline
+        #[arg(long)]
+        no_init: bool,
+    },
+
+    /// Stop managing a folder. Removes config and state; never deletes your files
+    Forget {
+        name: String,
+
+        /// Leave lodestone's local state (snapshot, bisync workdir) in place
+        #[arg(long)]
+        keep_state: bool,
+    },
+
     /// Establish the baseline for a folder: resync, then record the snapshot
     Init {
         /// Folder name. Omit to initialise every configured folder.
@@ -116,6 +147,25 @@ fn run(cli: &Cli) -> Result<ExitCode> {
         Cmd::Sync(a) => mutate(cli, a, Direction::Both),
         Cmd::Push(a) => mutate(cli, a, Direction::Push),
         Cmd::Pull(a) => mutate(cli, a, Direction::Pull),
+        Cmd::Add {
+            name,
+            local,
+            remote,
+            max_deletes,
+            no_init,
+        } => cmd::add::run(
+            cli.config.as_deref(),
+            &cmd::add::Options {
+                name,
+                local,
+                remote,
+                max_deletes: *max_deletes,
+                no_init: *no_init,
+            },
+        ),
+        Cmd::Forget { name, keep_state } => {
+            cmd::forget::run(cli.config.as_deref(), name, *keep_state)
+        }
         Cmd::Init { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::init::run(&cfg, target.as_deref())

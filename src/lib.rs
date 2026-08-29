@@ -11,6 +11,7 @@
 //!   entirely count against the delete guard.
 
 pub mod config;
+pub mod configfile;
 pub mod error;
 pub mod filters;
 pub mod machine;

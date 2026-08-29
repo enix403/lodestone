@@ -1,6 +1,8 @@
+pub mod add;
 pub mod apply;
 pub mod doctor;
 pub mod folders;
+pub mod forget;
 pub mod init;
 pub mod rename_test;
 pub mod render;

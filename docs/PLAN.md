@@ -96,7 +96,28 @@ Delivered:
 demand a resync on the very next command, for every folder. `init` now goes through
 `Session` like everything else. The end-to-end tests caught this; no unit test would have.
 
-## Step 4 — lodestone's own advisory lock
+## Step 4 — `add` and `forget` ✅ DONE
+
+Brought forward: this is the onboarding story, and onboarding a second machine is the
+nearest real milestone.
+
+Delivered:
+
+- `configfile` — format-preserving TOML editing via `toml_edit`, so comments, alignment and
+  key order in the dotfiles-tracked config survive an edit. Written atomically.
+- `lode add <name> --local P --remote R [--max-deletes N] [--no-init]` — validates the name
+  and that the remote resolves in `rclone.conf` **before** writing anything, then writes
+  the stanza and establishes the baseline in the same command.
+- Paths under `$HOME` are stored as `~/...`, so the shared config stays portable between
+  macOS and Linux without a per-machine override.
+- `lode forget <name> [--keep-state]` — removes the config stanza and lodestone's local
+  state, and states explicitly that no files were deleted on either side.
+- 8 unit + 6 e2e tests.
+
+Onboarding a machine is now: install rclone → `rclone config` once → symlink dotfiles →
+`lode add` (or `lode init` if the stanza is already in the shared config).
+
+## Step 5 — lodestone's own advisory lock
 
 Prevents two terminals racing before rclone is ever invoked.
 
@@ -104,22 +125,12 @@ Prevents two terminals racing before rclone is ever invoked.
 - Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
 - Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
 
-## Step 5 — Local trash
+## Step 6 — Local trash
 
 Deletions must be recoverable without going to Drive's web UI.
 
 - `--backup-dir1` into `$XDG_STATE_HOME/lode/trash/<folder>/<timestamp>/`.
 - `lode trash list|restore|prune`. No `--backup-dir2` (TDD §6.4).
-
-## Step 6 — `add` and `forget`
-
-Completes onboarding to a single command.
-
-- `lode add <name> --local P --remote R` — validate the remote resolves, write the stanza
-  with `toml_edit` so comments and ordering in the dotfiles-tracked file survive, then
-  `init`. `--no-init` to only write config.
-- `lode forget <name>` — remove config stanza and local state; never touch files; say so
-  explicitly; `--purge-state` for the trash directory.
 
 ## Step 7 — Run history and logging
 

@@ -574,7 +574,7 @@ glibc and is always correct.)
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (60 tests: 40 unit + 20 e2e against real rclone):
+Implemented and tested end-to-end (74 tests: 48 unit + 26 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -587,10 +587,13 @@ Implemented and tested end-to-end (60 tests: 40 unit + 20 e2e against real rclon
   success, actionable mapping of expected bisync failures
 - **filters**: compiled-in OS-junk exclusions applied to both listing and sync, with the
   fingerprint recorded in the snapshot (§9.1)
+- **`add` / `forget`**: format-preserving TOML editing via `toml_edit`, remote validated
+  before anything is written, `$HOME`-relative paths stored as `~/...` for portability;
+  `forget` never touches files
 - `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
   `lode doctor`, `lode doctor rename-test`
 
-Not yet implemented: `add`/`forget`, `log`/`diff`, trash, lodestone's own advisory lock,
-and the cross-platform `doctor` checks in §9.
+Not yet implemented: `log`/`diff`, trash, lodestone's own advisory lock, and the
+cross-platform `doctor` checks in §9.
 
 See `docs/PLAN.md`.

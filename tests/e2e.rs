@@ -61,6 +61,21 @@ impl World {
         }
     }
 
+    /// A world with no folders configured yet, for exercising `add`.
+    fn empty() -> Self {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let config = root.join("config.toml");
+        std::fs::write(&config, "# empty\n").unwrap();
+        let local = root.join("unused");
+        World {
+            _tmp: tmp,
+            root,
+            config,
+            local,
+        }
+    }
+
     fn local_of(&self, folder: &str) -> PathBuf {
         self.root.join(folder).join("local")
     }
@@ -644,4 +659,150 @@ fn the_filter_fingerprint_is_recorded_in_the_snapshot() {
     assert!(fp.starts_with("fnv1a64:"), "{v}");
     // doctor must report the same fingerprint, so a mismatch can be diagnosed by eye.
     assert!(w.stdout(&["doctor"]).contains(fp));
+}
+
+// ---------------------------------------------------------------------------
+// add / forget
+// ---------------------------------------------------------------------------
+
+#[test]
+fn add_configures_and_baselines_in_one_command() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::empty();
+    let local = w.root.join("papers");
+    let remote = w.root.join("papers-remote");
+    std::fs::create_dir_all(&local).unwrap();
+    std::fs::create_dir_all(&remote).unwrap();
+    std::fs::write(local.join("a.pdf"), b"first document").unwrap();
+
+    let out = w.run(&[
+        "add",
+        "papers",
+        "--local",
+        local.to_str().unwrap(),
+        "--remote",
+        remote.to_str().unwrap(),
+        "--max-deletes",
+        "4",
+    ]);
+    assert_ok(&out, "add");
+
+    // The config gained a stanza...
+    let cfg = std::fs::read_to_string(&w.config).unwrap();
+    assert!(cfg.contains("[folder.papers]"), "{cfg}");
+    assert!(cfg.contains("max_deletes = 4"), "{cfg}");
+    // ...the original comment survived the edit...
+    assert!(cfg.contains("# empty"), "{cfg}");
+    // ...and the baseline was established in the same command.
+    assert!(w.stdout(&["folders"]).contains("ready"));
+    assert!(remote.join("a.pdf").exists());
+    assert!(w.stdout(&["status"]).contains("up to date"));
+}
+
+#[test]
+fn add_refuses_a_duplicate_and_leaves_config_intact() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    let out = w.run(&[
+        "add",
+        "docs",
+        "--local",
+        w.root.join("other").to_str().unwrap(),
+        "--remote",
+        w.root.join("other-remote").to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("already configured"));
+    // The pre-existing stanza is unchanged.
+    let cfg = std::fs::read_to_string(&w.config).unwrap();
+    assert!(cfg.contains(w.local.to_str().unwrap()), "{cfg}");
+}
+
+#[test]
+fn add_no_init_writes_config_without_baselining() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::empty();
+    let local = w.root.join("later");
+    let remote = w.root.join("later-remote");
+    std::fs::create_dir_all(&remote).unwrap();
+
+    let out = w.run(&[
+        "add",
+        "later",
+        "--local",
+        local.to_str().unwrap(),
+        "--remote",
+        remote.to_str().unwrap(),
+        "--no-init",
+    ]);
+    assert_ok(&out, "add --no-init");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("lode init later"));
+    assert!(w.stdout(&["folders"]).contains("not initialised"));
+}
+
+#[test]
+fn forget_removes_config_and_state_but_never_files() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+    let snapshot = w.root.join("state/lode/folders/docs/snapshot.json");
+    assert!(snapshot.exists());
+
+    let out = w.run(&["forget", "docs"]);
+    assert_ok(&out, "forget");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("no files were deleted"), "{text}");
+
+    // Config entry and state are gone...
+    assert!(!std::fs::read_to_string(&w.config)
+        .unwrap()
+        .contains("[folder.docs]"));
+    assert!(!snapshot.exists());
+    // ...but both sides of the data are untouched.
+    assert_eq!(count_pdfs(&w.local), 3);
+    assert_eq!(count_pdfs(&w.remote_of("docs")), 3);
+}
+
+#[test]
+fn forget_keep_state_leaves_the_snapshot_behind() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    let snapshot = w.root.join("state/lode/folders/docs/snapshot.json");
+
+    assert_ok(
+        &w.run(&["forget", "docs", "--keep-state"]),
+        "forget --keep-state",
+    );
+    assert!(snapshot.exists(), "state should have been kept");
+}
+
+#[test]
+fn forget_rejects_an_unknown_folder() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    let out = w.run(&["forget", "nope"]);
+    assert_eq!(out.status.code(), Some(2), "usage error");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not configured"));
 }

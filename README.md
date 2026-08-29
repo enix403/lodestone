@@ -36,7 +36,9 @@ cargo install --path .
 ```sh
 lode doctor                 # check the environment
 lode doctor rename-test     # verify rename tracking on this machine, offline
-lode init silvermine        # establish the baseline
+
+lode add silvermine --local ~/silvermine --remote per-gdrive:Silvermine
+lode init silvermine        # (only needed if the stanza is already in your config)
 lode status                 # what would happen — changes nothing
 lode push                   # send changes up (aborts if anything is coming down)
 lode pull                   # bring changes down (aborts if anything is going up)
@@ -58,6 +60,10 @@ local  = "~/silvermine"
 remote = "per-gdrive:Silvermine"
 ```
 
+`lode add` writes this stanza for you, preserving any comments and formatting already in
+the file, and stores paths under `$HOME` as `~/...` so one config works on both macOS and
+Linux. `lode forget <name>` reverses it — config and local state only, never your files.
+
 Machine-specific overrides go in a gitignored `config.local.toml`, so the main file can
 live in a dotfiles repo.
 
@@ -73,8 +79,8 @@ changes, so a per-machine list would force a resync every time you switched mach
 
 ## Status
 
-Usable. The plan engine and the apply phase both work end to end, covered by 60 tests
-including 20 that drive the real binary against real rclone with no network.
+Usable. The plan engine and the apply phase both work end to end, covered by 74 tests
+including 26 that drive the real binary against real rclone with no network.
 
-Still to come: `add`/`forget`, run history, local trash and the cross-platform `doctor`
+Still to come: run history, local trash, an advisory lock and the cross-platform `doctor`
 checks — see [the plan](docs/PLAN.md).
