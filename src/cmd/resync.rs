@@ -16,18 +16,35 @@ use lodestone::{paths, Error, Result};
 
 pub fn run(cfg: &Config, name: &str, confirmed: bool) -> Result<ExitCode> {
     let f = cfg.get(name)?;
+    let session = Session::new()?;
+
+    // Show what a resync would actually do to *these* two sides before doing it. This
+    // needs no snapshot, which is the point: it works precisely when `status` cannot.
+    let comparison = session.compare(f)?;
+    println!("{name}: {}", crate::cmd::compare::summarise(&comparison));
+    crate::cmd::compare::render(&comparison);
+
+    if !comparison.differing.is_empty() {
+        println!();
+        println!(
+            "  WARNING: {} file(s) differ on both sides. A resync resolves these in favour",
+            comparison.differing.len()
+        );
+        println!("  of the LOCAL copy, overwriting the remote one. That overwrite is not");
+        println!("  captured in lode's trash — only whatever versioning the remote keeps.");
+    }
 
     if !confirmed {
+        println!();
         return Err(Error::Config(format!(
             "`lode resync {name}` re-establishes the baseline by unioning both sides.\n\
              Anything you deleted locally but never synced will be restored from the remote,\n\
              and an unsynced reorganisation will leave files at BOTH the old and new paths.\n\
              Nothing is deleted, but you may have cleanup to do.\n\
-             Re-run with --i-understand once you have checked."
+             Re-run with --i-understand once you have checked the comparison above."
         )));
     }
 
-    let session = Session::new()?;
     let remotes = session.rclone.list_remotes()?;
 
     // Drop the stale snapshot first so the baseline is rebuilt from what is actually

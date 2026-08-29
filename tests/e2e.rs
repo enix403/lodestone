@@ -1269,3 +1269,83 @@ fn a_regenerated_machine_id_is_diagnosed_as_such() {
     assert!(!text.contains("never be synced between machines"), "{text}");
     assert!(text.contains("lode resync docs --i-understand"), "{text}");
 }
+
+#[test]
+fn compare_works_without_a_snapshot() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Diverge the sides, then destroy the merge base.
+    std::fs::write(w.local.join("inbox/mine.pdf"), b"only local").unwrap();
+    std::fs::write(w.remote_of("docs").join("inbox/theirs.pdf"), b"only remote").unwrap();
+    std::fs::write(w.local.join("inbox/doc1.pdf"), b"local edit").unwrap();
+    std::fs::write(
+        w.remote_of("docs").join("inbox/doc1.pdf"),
+        b"remote edit differs",
+    )
+    .unwrap();
+    std::fs::remove_file(w.root.join("state/lode/folders/docs/snapshot.json")).unwrap();
+
+    // `status` cannot answer without a merge base...
+    assert!(w.stdout(&["status"]).contains("no snapshot yet"));
+
+    // ...but `compare` still can, which is the whole point.
+    let out = w.run(&["compare", "--json"]);
+    assert_ok(&out, "compare");
+    let v = json(&out);
+    assert_eq!(v[0]["ok"], true, "{v}");
+    assert_eq!(v[0]["local_only"][0], "inbox/mine.pdf", "{v}");
+    assert_eq!(v[0]["remote_only"][0], "inbox/theirs.pdf", "{v}");
+    assert_eq!(v[0]["differing"][0], "inbox/doc1.pdf", "{v}");
+    assert_eq!(v[0]["in_sync"], false);
+}
+
+#[test]
+fn resync_warns_which_side_wins_before_asking() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::write(w.local.join("inbox/doc1.pdf"), b"local wins this").unwrap();
+    std::fs::write(
+        w.remote_of("docs").join("inbox/doc1.pdf"),
+        b"remote loses this",
+    )
+    .unwrap();
+
+    let out = w.run(&["resync", "docs"]);
+    assert!(
+        !out.status.success(),
+        "must not proceed without --i-understand"
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("differ       inbox/doc1.pdf"), "{text}");
+    assert!(text.contains("favour"), "{text}");
+    assert!(text.contains("LOCAL copy"), "{text}");
+    // Nothing changed.
+    assert_eq!(
+        std::fs::read(w.remote_of("docs").join("inbox/doc1.pdf")).unwrap(),
+        b"remote loses this"
+    );
+}
+
+#[test]
+fn compare_reports_identical_sides() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 4);
+    assert_ok(&w.run(&["init"]), "init");
+    let text = w.stdout(&["compare"]);
+    assert!(text.contains("both sides identical (4 file(s))"), "{text}");
+}

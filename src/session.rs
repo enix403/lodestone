@@ -6,7 +6,7 @@
 
 use crate::config::Folder;
 use crate::error::{Error, Result};
-use crate::plan::Plan;
+use crate::plan::{Comparison, Plan};
 use crate::rclone::bullet_list;
 use crate::rclone::{Rclone, Version};
 use crate::snapshot::{Listing, Snapshot};
@@ -61,6 +61,17 @@ impl Session {
         let remote = self.rclone.lsjson(&f.remote)?;
         check_collisions(&f.name, &local, &remote)?;
         Ok(Plan::compute(&f.name, &snapshot.entries, &local, &remote))
+    }
+
+    /// A two-way comparison of the sides, needing no snapshot.
+    ///
+    /// This is what remains answerable once the merge base is lost, and what you need in
+    /// order to decide whether re-baselining is safe.
+    pub fn compare(&self, f: &Folder) -> Result<Comparison> {
+        let local = self.local_listing(f)?;
+        let remote = self.rclone.lsjson(&f.remote)?;
+        check_collisions(&f.name, &local, &remote)?;
+        Ok(Comparison::compute(&local, &remote))
     }
 
     fn local_listing(&self, f: &Folder) -> Result<Listing> {

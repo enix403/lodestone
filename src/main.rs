@@ -57,6 +57,12 @@ enum Cmd {
         target: Option<String>,
     },
 
+    /// Compare the two sides directly, without needing a baseline
+    Compare {
+        /// Folder name, or `.`. Omit for every configured folder.
+        target: Option<String>,
+    },
+
     /// Synchronise in both directions
     Sync(SyncArgs),
 
@@ -195,6 +201,10 @@ fn run(cli: &Cli) -> Result<ExitCode> {
         Cmd::Status { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::status::run(&cfg, target.as_deref(), cli.json)
+        }
+        Cmd::Compare { target } => {
+            let cfg = Config::load(cli.config.as_deref())?;
+            cmd::compare::run(&cfg, target.as_deref(), cli.json)
         }
         Cmd::Sync(a) => mutate(cli, a, Direction::Both),
         Cmd::Push(a) => mutate(cli, a, Direction::Push),

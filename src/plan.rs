@@ -176,6 +176,51 @@ pub struct Conflict {
     pub kind: ConflictKind,
 }
 
+/// A snapshot-free, two-way comparison of the sides.
+///
+/// The plan phase needs a merge base to say *what happened*. When the snapshot is gone
+/// that question is unanswerable — but "how do the two sides differ right now?" still is,
+/// and it is what you need in order to decide whether re-baselining is safe.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Comparison {
+    /// Present locally, absent on the remote.
+    pub local_only: Vec<String>,
+    /// Present on the remote, absent locally.
+    pub remote_only: Vec<String>,
+    /// Present on both with different content. A resync resolves these in favour of the
+    /// local side, overwriting the remote copy.
+    pub differing: Vec<String>,
+    /// Present on both, identical.
+    pub identical: usize,
+}
+
+impl Comparison {
+    pub fn compute(local: &Listing, remote: &Listing) -> Self {
+        let mut c = Comparison::default();
+        for (path, l) in local {
+            match remote.get(path) {
+                None => c.local_only.push(path.clone()),
+                Some(r) => match l.same_content(r) {
+                    Some(true) => c.identical += 1,
+                    // Unknown content (no hash either side) is reported as differing:
+                    // claiming they match without evidence is the unsafe direction.
+                    _ => c.differing.push(path.clone()),
+                },
+            }
+        }
+        for path in remote.keys() {
+            if !local.contains_key(path) {
+                c.remote_only.push(path.clone());
+            }
+        }
+        c
+    }
+
+    pub fn in_sync(&self) -> bool {
+        self.local_only.is_empty() && self.remote_only.is_empty() && self.differing.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub folder: String,
@@ -611,6 +656,55 @@ mod tests {
             p.evaluate(10, Direction::Pull),
             Err(Error::Assertion(_))
         ));
+    }
+
+    #[test]
+    fn comparison_classifies_each_side() {
+        let local = listing(&[
+            ("both-same.pdf", e(1, "h1")),
+            ("both-diff.pdf", e(2, "mine")),
+            ("mine.pdf", e(3, "h3")),
+        ]);
+        let remote = listing(&[
+            ("both-same.pdf", e(1, "h1")),
+            ("both-diff.pdf", e(2, "theirs")),
+            ("theirs.pdf", e(4, "h4")),
+        ]);
+        let c = Comparison::compute(&local, &remote);
+        assert_eq!(c.local_only, vec!["mine.pdf".to_string()]);
+        assert_eq!(c.remote_only, vec!["theirs.pdf".to_string()]);
+        assert_eq!(c.differing, vec!["both-diff.pdf".to_string()]);
+        assert_eq!(c.identical, 1);
+        assert!(!c.in_sync());
+    }
+
+    #[test]
+    fn identical_sides_compare_as_in_sync() {
+        let l = listing(&[("a.pdf", e(1, "h1")), ("b.pdf", e(2, "h2"))]);
+        let c = Comparison::compute(&l, &l);
+        assert!(c.in_sync());
+        assert_eq!(c.identical, 2);
+    }
+
+    #[test]
+    fn uncomparable_content_counts_as_differing() {
+        // No hash on either side: assert they match without evidence and a resync would
+        // silently overwrite one with the other.
+        let l = listing(&[("x", nohash(5, "t1"))]);
+        let r = listing(&[("x", nohash(5, "t2"))]);
+        let c = Comparison::compute(&l, &r);
+        assert_eq!(c.differing, vec!["x".to_string()]);
+        assert_eq!(c.identical, 0);
+    }
+
+    #[test]
+    fn a_comparison_needs_no_snapshot() {
+        // The whole point: this is computable when the merge base is gone.
+        let empty = Listing::new();
+        let remote = listing(&[("a.pdf", e(1, "h1"))]);
+        let c = Comparison::compute(&empty, &remote);
+        assert_eq!(c.remote_only, vec!["a.pdf".to_string()]);
+        assert!(c.local_only.is_empty());
     }
 
     #[test]

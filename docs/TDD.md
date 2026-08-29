@@ -397,6 +397,15 @@ are pending:
 
 Neither is data loss, but the second needs manual cleanup and propagates to other machines.
 
+**A resync also picks a winner.** For a file present on both sides with different content,
+rclone's default `--resync-mode path1` means the **local** copy wins and the remote copy is
+overwritten — and that overwrite is *not* captured in lodestone's trash, which only guards
+the local side. On Drive the old version survives in its own revision history; on a backend
+without versioning it is gone. Verified empirically.
+
+`lode resync` therefore prints a comparison of the two sides *before* asking for
+confirmation, naming the files that differ and stating which side will win.
+
 Because of this, `lode init` **refuses** to run on a folder that has bisync listings but no
 snapshot — that combination means the folder was initialised here before and lost its merge
 base, which is exactly the dangerous case. Re-baselining is available only as
@@ -406,6 +415,14 @@ flag. A genuinely fresh machine has no listings, so ordinary onboarding is unaff
 A machine id that changed while the *hostname* stayed the same is reported separately from
 a snapshot that arrived from another machine: same symptom, different cause, different
 remedy.
+
+**`lode compare` exists for exactly this situation.** `status` answers "what happened since
+the last sync", which requires the merge base; with the snapshot gone that question has no
+answer. "How do the two sides differ right now?" still does, and it is what you need in
+order to decide whether re-baselining is safe. `compare` is a two-way diff — local-only,
+remote-only, differing, identical — and needs no snapshot. Content that cannot be compared
+(no hash on either side) is reported as *differing*, since claiming a match without evidence
+is the unsafe direction.
 
 ### 6.6 Exit codes
 
@@ -497,6 +514,7 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 | `lode sync [folder\|.]` | Plan → apply. Bidirectional, no assertion. |
 | `lode push [folder\|.]` | Plan → apply. Aborts on incoming changes. |
 | `lode pull [folder\|.]` | Plan → apply. Aborts on outgoing changes. |
+| `lode compare [folder\|.]` | Two-way diff of the sides. Needs no baseline. |
 | `lode diff <folder>` | Verbose per-file plan (`status` is the summary). |
 | `lode log [--show ID]` | Past runs and their raw logs. |
 
@@ -696,7 +714,7 @@ so this exercises the symmetric hash matcher and nothing else. The full unit + e
 also passes on Linux, where the two name-collision tests that skip on APFS execute for
 real.
 
-Implemented and tested end-to-end (125 tests: 82 unit + 43 e2e against real rclone):
+Implemented and tested end-to-end (132 tests: 86 unit + 46 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -723,7 +741,7 @@ Implemented and tested end-to-end (125 tests: 82 unit + 43 e2e against real rclo
   `lode doctor rename-test`
 
 - **`lode resync <folder> --i-understand`** with an `init` guard against accidental
-  re-baselining (§6.5)
+  re-baselining, and **`lode compare`**, the snapshot-free two-way diff (§6.5)
 
 Not yet implemented: `log`/`diff` and lodestone's own advisory lock.
 
