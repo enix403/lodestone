@@ -1169,3 +1169,103 @@ fn count_files(dir: &Path) -> usize {
     }
     n
 }
+
+// ---------------------------------------------------------------------------
+// Losing state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_lost_snapshot_blocks_init_instead_of_silently_resurrecting_files() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 4);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // A deletion made locally but never synced.
+    std::fs::remove_file(w.local.join("inbox/doc2.pdf")).unwrap();
+    // Now lose the merge base.
+    std::fs::remove_file(w.root.join("state/lode/folders/docs/snapshot.json")).unwrap();
+
+    // Plain `init` must refuse: resyncing would union both sides and bring doc2 back.
+    let out = w.run(&["init"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        text.contains("initialised on this machine before"),
+        "{text}"
+    );
+    assert!(text.contains("lode resync docs --i-understand"), "{text}");
+    assert!(
+        !w.local.join("inbox/doc2.pdf").exists(),
+        "nothing should have changed"
+    );
+}
+
+#[test]
+fn resync_requires_explicit_confirmation() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    let out = w.run(&["resync", "docs"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("--i-understand"), "{text}");
+    assert!(text.contains("unioning both sides"), "{text}");
+}
+
+#[test]
+fn resync_re_establishes_a_baseline_after_the_snapshot_is_lost() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::remove_file(w.root.join("state/lode/folders/docs/snapshot.json")).unwrap();
+
+    let out = w.run(&["resync", "docs", "--i-understand"]);
+    assert_ok(&out, "resync");
+    assert!(w.stdout(&["status"]).contains("up to date"));
+    assert_eq!(count_files(&w.local), 3);
+}
+
+#[test]
+fn a_regenerated_machine_id_is_diagnosed_as_such() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Same host, new random suffix — what happens if machine.id is deleted and remade.
+    let snap = w.root.join("state/lode/folders/docs/snapshot.json");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&snap).unwrap()).unwrap();
+    let host = v["machine_id"]
+        .as_str()
+        .unwrap()
+        .rsplit_once('-')
+        .unwrap()
+        .0
+        .to_string();
+    v["machine_id"] = serde_json::Value::String(format!("{host}-0000000000000000"));
+    std::fs::write(&snap, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+
+    let text = w.stdout(&["status"]);
+    // Must not be described as a snapshot from another machine — the cause is different
+    // and so is the remedy.
+    assert!(text.contains("machine's id has changed"), "{text}");
+    assert!(!text.contains("never be synced between machines"), "{text}");
+    assert!(text.contains("lode resync docs --i-understand"), "{text}");
+}

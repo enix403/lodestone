@@ -73,6 +73,11 @@ pub struct Snapshot {
 
 pub const SNAPSHOT_VERSION: u32 = 1;
 
+/// The hostname portion of a machine id (`<hostname>-<random hex>`).
+fn host_of(id: &str) -> &str {
+    id.rsplit_once('-').map(|(host, _)| host).unwrap_or(id)
+}
+
 impl Snapshot {
     pub fn new(folder: &str, machine_id: &str, entries: Listing) -> Self {
         Self {
@@ -96,6 +101,14 @@ impl Snapshot {
         };
         let snap: Snapshot = serde_json::from_str(&raw)?;
         if snap.machine_id != machine_id {
+            // Same host, different id: the id file was regenerated rather than the
+            // snapshot arriving from elsewhere. Very different cause, so say so.
+            if host_of(&snap.machine_id) == host_of(machine_id) {
+                return Err(Error::MachineIdChanged(
+                    folder.to_string(),
+                    paths::state_dir().join("machine.id").display().to_string(),
+                ));
+            }
             return Err(Error::ForeignSnapshot {
                 folder: folder.to_string(),
                 stored: snap.machine_id,
@@ -130,6 +143,14 @@ fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_id_host_is_split_off_correctly() {
+        assert_eq!(host_of("radium-fed-18d0e7aa75978294"), "radium-fed");
+        assert_eq!(host_of("MT-H0Y07-Qateef-18d0"), "MT-H0Y07-Qateef");
+        // No suffix at all: treat the whole thing as the host rather than panicking.
+        assert_eq!(host_of("plain"), "plain");
+    }
 
     #[test]
     fn same_content_is_tri_state() {

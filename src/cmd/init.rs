@@ -30,12 +30,29 @@ pub fn run(cfg: &Config, target: Option<&str>) -> Result<ExitCode> {
             );
             continue;
         }
-        init_one(&session, &remotes, f)?;
+        // A folder with bisync listings but no snapshot was initialised here before and
+        // then lost its merge base. Resyncing it unions both sides, which resurrects
+        // anything deleted or moved locally but never synced — so that case has to be a
+        // deliberate `resync`, not an incidental `init`.
+        if has_bisync_listings(&f.name) {
+            return Err(Error::PreviouslyInitialised(f.name.clone()));
+        }
+        establish_baseline(&session, &remotes, f)?;
     }
     Ok(ExitCode::Ok)
 }
 
-fn init_one(session: &Session, remotes: &[String], f: &Folder) -> Result<()> {
+/// Whether bisync has prior listings for this folder, i.e. it ran here before.
+fn has_bisync_listings(folder: &str) -> bool {
+    std::fs::read_dir(paths::bisync_workdir(folder))
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "lst"))
+        })
+        .unwrap_or(false)
+}
+
+pub fn establish_baseline(session: &Session, remotes: &[String], f: &Folder) -> Result<()> {
     // Validate the remote before doing anything destructive. rclone owns rclone.conf;
     // lodestone only checks that the name it was given actually resolves.
     if let Some(name) = f.remote_name() {

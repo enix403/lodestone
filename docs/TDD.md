@@ -372,7 +372,42 @@ belief was wrong. `lode sync` is the unrestricted escape hatch the error message
   a second remote trash directory is redundant clutter that consumes quota. Only the local
   side is covered, because it is the side with no other safety net.
 
-### 6.5 Exit codes
+### 6.5 Losing state
+
+lodestone's state is machine-local and disposable in the sense that **no user data lives
+in it** — but it is *not* disposable in the sense of being free to lose, because the
+snapshot is the merge base and without it the tool cannot tell a deletion from an addition.
+
+Verified behaviour when each piece goes missing:
+
+| Deleted | Effect |
+|---|---|
+| `folders/<name>/snapshot.json` | every command refuses with `no snapshot yet`; recoverable only by re-baselining |
+| `machine.id` | a new id is generated, the snapshot no longer matches it, and every command refuses |
+| `$XDG_CACHE_HOME/lode/bisync/<name>/*.lst` | bisync demands a new baseline (`NeedsResync`) |
+
+**The trap is what re-baselining does.** A resync *unions* both sides — it copies each
+side's files to the other and deletes nothing. So if the snapshot is lost while changes
+are pending:
+
+- a **deletion** made locally but never synced is **undone**: the file returns from the
+  remote;
+- an unsynced **reorganisation** is worse: the files end up at **both** the old and the new
+  paths, on both sides. Three files became six in testing.
+
+Neither is data loss, but the second needs manual cleanup and propagates to other machines.
+
+Because of this, `lode init` **refuses** to run on a folder that has bisync listings but no
+snapshot — that combination means the folder was initialised here before and lost its merge
+base, which is exactly the dangerous case. Re-baselining is available only as
+`lode resync <folder> --i-understand`, which states the union semantics and requires the
+flag. A genuinely fresh machine has no listings, so ordinary onboarding is unaffected.
+
+A machine id that changed while the *hostname* stayed the same is reported separately from
+a snapshot that arrived from another machine: same symptom, different cause, different
+remedy.
+
+### 6.6 Exit codes
 
 Part of the public contract, so wrapper scripts can branch on them (retry a 13, never
 retry a 10):
@@ -387,7 +422,7 @@ retry a 10):
 | 12 | aborted: directional assertion violated |
 | 13 | rclone failed / remote unreachable |
 
-### 6.6 Fan-out
+### 6.7 Fan-out
 
 With no folder argument, commands operate on **every** configured folder: sequentially
 (interleaved rclone output is unreadable and parallel transfers contend for one uplink),
@@ -395,7 +430,7 @@ With no folder argument, commands operate on **every** configured folder: sequen
 conflict in one must not block another. The command exits with the most specific failure
 code and prints a summary that is impossible to miss.
 
-### 6.7 rclone's own floor: a side may never become empty *(empirically verified)*
+### 6.8 rclone's own floor: a side may never become empty *(empirically verified)*
 
 Independently of everything above, rclone refuses to sync when one side's current listing
 is empty:
@@ -618,7 +653,7 @@ glibc and is always correct.)
 6. Remote-side rename detection relies on content hashes; a backend that serves no hashes
    degrades to delete+create.
 7. A folder cannot be emptied through `sync`/`push`/`pull` at all — rclone refuses, and
-   `--allow-deletes` does not help (§6.7). Emptying requires a deliberate re-baseline.
+   `--allow-deletes` does not help (§6.8). Emptying requires a deliberate re-baseline.
 
 ---
 
@@ -661,7 +696,7 @@ so this exercises the symmetric hash matcher and nothing else. The full unit + e
 also passes on Linux, where the two name-collision tests that skip on APFS execute for
 real.
 
-Implemented and tested end-to-end (117 tests: 79 unit + 38 e2e against real rclone):
+Implemented and tested end-to-end (125 tests: 82 unit + 43 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -686,6 +721,9 @@ Implemented and tested end-to-end (117 tests: 79 unit + 38 e2e against real rclo
 - `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
   `lode trash list|restore|prune`, `lode add`, `lode forget`, `lode doctor`,
   `lode doctor rename-test`
+
+- **`lode resync <folder> --i-understand`** with an `init` guard against accidental
+  re-baselining (§6.5)
 
 Not yet implemented: `log`/`diff` and lodestone's own advisory lock.
 

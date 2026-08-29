@@ -6,6 +6,7 @@ pub mod forget;
 pub mod init;
 pub mod rename_test;
 pub mod render;
+pub mod resync;
 pub mod status;
 pub mod trash;
 pub mod unlock;

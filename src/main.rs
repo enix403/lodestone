@@ -107,6 +107,16 @@ enum Cmd {
         target: Option<String>,
     },
 
+    /// Re-establish a folder's baseline. Unions both sides — read the help first
+    Resync {
+        name: String,
+
+        /// Required. A resync restores anything deleted locally but never synced, and
+        /// leaves an unsynced reorganisation present at both the old and new paths.
+        #[arg(long)]
+        i_understand: bool,
+    },
+
     /// Clear a bisync lock left behind by an interrupted run
     Unlock {
         /// Folder name. Omit for every configured folder.
@@ -213,6 +223,10 @@ fn run(cli: &Cli) -> Result<ExitCode> {
         Cmd::Init { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::init::run(&cfg, target.as_deref())
+        }
+        Cmd::Resync { name, i_understand } => {
+            let cfg = Config::load(cli.config.as_deref())?;
+            cmd::resync::run(&cfg, name, *i_understand)
         }
         Cmd::Unlock { target } => {
             let cfg = Config::load(cli.config.as_deref())?;

@@ -52,13 +52,35 @@ pub enum Error {
 
     #[error(
         "snapshot for folder {folder:?} was written by machine {stored:?} but this is {current:?}.\n\
-         Snapshots are machine-local and must never be synced between machines."
+         Snapshots are machine-local and must never be synced between machines.\n\
+         If this folder really belongs here, re-establish it with:\n\
+         \x20 lode resync {folder} --i-understand"
     )]
     ForeignSnapshot {
         folder: String,
         stored: String,
         current: String,
     },
+
+    #[error(
+        "this machine's id has changed since folder {0:?} was last synced, so its snapshot \
+         can no longer be trusted.\n\
+         The usual cause is a deleted or recreated {1}.\n\
+         Nothing is lost. Re-establish the baseline with:\n\
+         \x20 lode resync {0} --i-understand\n\
+         Read `lode resync --help` first if you have local changes that were never synced."
+    )]
+    MachineIdChanged(String, String),
+
+    #[error(
+        "folder {0:?} was initialised on this machine before, but its snapshot is missing.\n\
+         Re-running `init` would resync, which unions both sides — so anything you deleted \
+         or moved locally but never synced would be restored from the remote, and an \
+         unsynced reorganisation would leave the files at BOTH the old and new paths.\n\
+         If that is acceptable, or you have no unsynced changes, run:\n\
+         \x20 lode resync {0} --i-understand"
+    )]
+    PreviouslyInitialised(String),
 
     #[error(
         "lodestone state directory {state:?} is inside synced folder {folder:?}.\n\
