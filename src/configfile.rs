@@ -24,23 +24,38 @@ pub fn target_path(explicit: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| paths::config_dir().join("config.toml"))
 }
 
-fn read_doc(path: &Path) -> Result<DocumentMut> {
+/// Returns the parsed document and whether the file already existed.
+///
+/// A brand-new file is *not* seeded by parsing the header text: toml_edit treats a
+/// comments-only document as trailing trivia, so the first inserted table would be placed
+/// above the comments and the header would end up at the bottom, reading as if it belonged
+/// to that stanza. The header is prepended at write time instead.
+fn read_doc(path: &Path) -> Result<(DocumentMut, bool)> {
     let raw = match std::fs::read_to_string(path) {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => HEADER.to_string(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((DocumentMut::new(), false))
+        }
         Err(e) => return Err(Error::io(path.display(), e)),
     };
-    raw.parse::<DocumentMut>()
-        .map_err(|e| Error::Config(format!("{}: {e}", path.display())))
+    let doc = raw
+        .parse::<DocumentMut>()
+        .map_err(|e| Error::Config(format!("{}: {e}", path.display())))?;
+    Ok((doc, true))
 }
 
-fn write_doc(path: &Path, doc: &DocumentMut) -> Result<()> {
+fn write_doc(path: &Path, doc: &DocumentMut, add_header: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::io(parent.display(), e))?;
     }
+    let body = if add_header {
+        format!("{HEADER}\n{doc}")
+    } else {
+        doc.to_string()
+    };
     // Write-then-rename: a half-written config would be worse than no edit at all.
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, doc.to_string()).map_err(|e| Error::io(tmp.display(), e))?;
+    std::fs::write(&tmp, body).map_err(|e| Error::io(tmp.display(), e))?;
     std::fs::rename(&tmp, path).map_err(|e| Error::io(path.display(), e))
 }
 
@@ -89,7 +104,7 @@ pub fn add_folder(path: &Path, f: &NewFolder<'_>) -> Result<()> {
         )));
     }
 
-    let mut doc = read_doc(path)?;
+    let (mut doc, existed) = read_doc(path)?;
     let folders = doc
         .entry("folder")
         .or_insert(Item::Table(Table::new()))
@@ -114,19 +129,19 @@ pub fn add_folder(path: &Path, f: &NewFolder<'_>) -> Result<()> {
     }
     folders.insert(f.name, Item::Table(t));
 
-    write_doc(path, &doc)
+    write_doc(path, &doc, !existed)
 }
 
 /// Remove a `[folder.<name>]` stanza. Returns false if it was not there.
 pub fn remove_folder(path: &Path, name: &str) -> Result<bool> {
-    let mut doc = read_doc(path)?;
+    let (mut doc, _) = read_doc(path)?;
     let Some(folders) = doc.get_mut("folder").and_then(|f| f.as_table_mut()) else {
         return Ok(false);
     };
     if folders.remove(name).is_none() {
         return Ok(false);
     }
-    write_doc(path, &doc)?;
+    write_doc(path, &doc, false)?;
     Ok(true)
 }
 
@@ -163,9 +178,41 @@ mod tests {
         assert!(out.contains("[folder.silvermine]"), "{out}");
         assert!(out.contains(r#"local = "~/silvermine""#), "{out}");
         assert!(out.contains("# lodestone folders"), "header missing: {out}");
+        // The header must lead the file. toml_edit treats a comments-only document as
+        // trailing trivia, so seeding a new file by parsing the header text would push it
+        // below the first stanza, where it reads as a comment on that stanza.
+        assert!(
+            out.starts_with("# lodestone folders"),
+            "header must come first: {out}"
+        );
+        assert!(
+            out.find("# lodestone folders").unwrap() < out.find("[folder.silvermine]").unwrap(),
+            "{out}"
+        );
         // Round-trips through the real loader.
         let parsed: crate::config::RawConfig = toml::from_str(&out).unwrap();
         assert!(parsed.folder.contains_key("silvermine"));
+    }
+
+    #[test]
+    fn an_existing_file_never_gains_a_header() {
+        // The header is only for a file lodestone creates. Adding it to a file the user
+        // already owns would be presumptuous, and adding it on every edit would stack up.
+        //
+        // Note: a *comments-only* file has its comment as document-trailing trivia, so
+        // toml_edit places the first inserted table above it. The comment survives, just
+        // not in its original position. Comments attached to keys or tables stay put —
+        // see `preserves_comments_and_existing_content`.
+        let (_d, p) = tmpfile("# my own notes\n");
+        add(&p, "a", "~/a", "r:a").unwrap();
+        add(&p, "b", "~/b", "r:b").unwrap();
+        let out = std::fs::read_to_string(&p).unwrap();
+        assert!(!out.contains("# lodestone folders"), "{out}");
+        assert!(
+            out.contains("# my own notes"),
+            "the user's comment must survive: {out}"
+        );
+        assert_eq!(out.matches("# my own notes").count(), 1, "{out}");
     }
 
     #[test]
