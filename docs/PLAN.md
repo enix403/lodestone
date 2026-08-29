@@ -168,6 +168,32 @@ normalisation-insensitive and skip, because the collision cannot even be staged 
 exercise fully on Linux. The gate itself is covered unconditionally by unit tests over
 synthetic listings.
 
+## Interlude — first real run against Google Drive ✅ DONE
+
+`~/silvermine` (37 files, 33 MB) adopted on macOS. Both sides were already identical, so
+the baseline was a verified no-op; `rclone check` reported 0 differences before and after.
+
+A throwaway scratch folder on the same Drive account then exercised the paths that local
+directory pairs cannot prove:
+
+- reorganising 12 files produced **12 server-side moves and 0 bytes transferred** — the
+  `--track-renames` finding holds on Drive, not just locally
+- a delete made on Drive propagated on `pull` and was captured in the local trash
+- `trash restore` followed by `push` recovered the file and re-uploaded it
+
+**Three bugs found by doing this, all fixed:**
+
+1. `init` failed against a remote path that did not exist yet — bisync aborts with
+   `directory not found` rather than creating it. `init` now runs `rclone mkdir` first.
+   This is the ordinary case for adding a *new* folder, so it would have hit immediately.
+2. `--track-renames` on a resync makes rclone log an ERROR and inflates its error count,
+   because resync copies rather than syncs. Omitted for that invocation.
+3. `forget` silently orphaned the folder's trash, which can hold the only copy of a file
+   deleted elsewhere. It now reports it and offers `--purge-trash`.
+
+A fourth, cosmetic, was found while writing the config: the generated header landed at the
+bottom of a new file.
+
 ## Step 7 — lodestone's own advisory lock
 
 Prevents two terminals racing before rclone is ever invoked.

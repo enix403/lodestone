@@ -95,6 +95,10 @@ enum Cmd {
         /// Leave lodestone's local state (snapshot, bisync workdir) in place
         #[arg(long)]
         keep_state: bool,
+
+        /// Also delete the folder's local trash. Those files may have no other copy.
+        #[arg(long)]
+        purge_trash: bool,
     },
 
     /// Establish the baseline for a folder: resync, then record the snapshot
@@ -201,9 +205,11 @@ fn run(cli: &Cli) -> Result<ExitCode> {
                 no_init: *no_init,
             },
         ),
-        Cmd::Forget { name, keep_state } => {
-            cmd::forget::run(cli.config.as_deref(), name, *keep_state)
-        }
+        Cmd::Forget {
+            name,
+            keep_state,
+            purge_trash,
+        } => cmd::forget::run(cli.config.as_deref(), name, *keep_state, *purge_trash),
         Cmd::Init { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::init::run(&cfg, target.as_deref())

@@ -584,6 +584,12 @@ unfiltered and then syncing filtered makes bisync demand a resync on the very ne
   1.60–1.63 range. `doctor` prints the remediation
   (`curl https://rclone.org/install.sh | sudo bash`).
 - Verified working against **rclone v1.73.3** on macOS (arm64).
+- **bisync does not create the remote directory.** A first `init` against a path that does
+  not exist yet aborts with `directory not found`, so `init` runs `rclone mkdir` first.
+- **A resync must not be given `--track-renames`.** Resync copies rather than syncs, and
+  rclone logs `Ignoring --track-renames as it doesn't work with copy or move` at ERROR
+  level, which is noise and inflates rclone's error count. lodestone omits the flag for
+  that one invocation.
 - `--hash-type md5` is mandatory on `lsjson`: without it, rclone computes *every* supported
   algorithm (blake3, sha512, whirlpool, …), reading every file many times over.
 
@@ -618,7 +624,23 @@ glibc and is always correct.)
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (112 tests: 77 unit + 35 e2e against real rclone):
+### Verified against real Google Drive
+
+Everything below was first proven against local directory pairs. It has since been
+exercised end-to-end against an actual Drive remote, using a throwaway scratch folder:
+
+| Behaviour | Result |
+|---|---|
+| Reorganise 12 files, `push` | **12 server-side moves, 0 bytes transferred**, 14.5 s |
+| Rename detection in the plan | all 12 correctly classified as renames, 0 true deletes |
+| Delete on Drive, `pull` | propagated locally, file captured in local trash |
+| `trash restore` + `push` | file recovered and re-uploaded |
+| Adopting an already-synced folder | resync was a clean no-op; `rclone check` reported 0 differences before and after |
+
+The `--track-renames` finding (§6.1) therefore holds on Drive, not just on a local
+filesystem — which is the claim the whole efficiency story rests on.
+
+Implemented and tested end-to-end (117 tests: 79 unit + 38 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -633,7 +655,9 @@ Implemented and tested end-to-end (112 tests: 77 unit + 35 e2e against real rclo
   fingerprint recorded in the snapshot (§9.1)
 - **`add` / `forget`**: format-preserving TOML editing via `toml_edit`, remote validated
   before anything is written, `$HOME`-relative paths stored as `~/...` for portability;
-  `forget` never touches files
+  `forget` never touches files, and keeps the folder's trash — which may hold the only copy
+  of a file deleted elsewhere — reporting it rather than discarding it silently
+  (`--purge-trash` to remove)
 - **local trash**: `--backup-dir1` into timestamped run directories, with
   `lode trash list|restore|prune` (§6.4)
 - **cross-platform hazards**: name-collision and duplicate-name gates in the plan phase;

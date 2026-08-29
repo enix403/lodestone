@@ -1066,3 +1066,60 @@ fn an_ordinary_folder_reports_no_hazards() {
         "{text}"
     );
 }
+
+#[test]
+fn forget_keeps_trashed_files_and_says_so() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+    // Put something in the trash: a file deleted elsewhere, now held only here.
+    std::fs::remove_file(w.remote_of("docs").join("inbox/doc1.pdf")).unwrap();
+    assert_ok(&w.run(&["pull"]), "pull");
+
+    let out = w.run(&["forget", "docs"]);
+    assert_ok(&out, "forget");
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Silently discarding this would destroy the last copy of doc1.pdf.
+    assert!(text.contains("KEPT 1 trashed file"), "{text}");
+    assert!(text.contains("--purge-trash"), "{text}");
+    let trashed = w.root.join("state/lode/trash/docs");
+    assert!(trashed.exists(), "trash must survive forget");
+}
+
+#[test]
+fn forget_purge_trash_removes_it_explicitly() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::remove_file(w.remote_of("docs").join("inbox/doc1.pdf")).unwrap();
+    assert_ok(&w.run(&["pull"]), "pull");
+
+    let out = w.run(&["forget", "docs", "--purge-trash"]);
+    assert_ok(&out, "forget --purge-trash");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("purged trash"));
+    assert!(!w.root.join("state/lode/trash/docs").exists());
+}
+
+#[test]
+fn forget_leaves_no_empty_trash_directory() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    let out = w.run(&["forget", "docs"]);
+    assert_ok(&out, "forget");
+    // Nothing was at risk, so no stray directory should be left behind.
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("KEPT"));
+    assert!(!w.root.join("state/lode/trash/docs").exists());
+}

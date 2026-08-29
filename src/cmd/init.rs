@@ -45,6 +45,9 @@ fn init_one(session: &Session, remotes: &[String], f: &Folder) -> Result<()> {
     }
 
     std::fs::create_dir_all(&f.local).map_err(|e| Error::io(f.local.display(), e))?;
+    // bisync aborts with `directory not found` rather than creating the remote path, so
+    // a first init against a folder that does not exist on the remote yet has to make it.
+    session.rclone.mkdir(&f.remote)?;
     let workdir = paths::bisync_workdir(&f.name);
     std::fs::create_dir_all(&workdir).map_err(|e| Error::io(workdir.display(), e))?;
 

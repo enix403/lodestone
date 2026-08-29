@@ -204,6 +204,15 @@ impl Rclone {
         Ok(found)
     }
 
+    /// Create a directory, including parents. Idempotent.
+    ///
+    /// bisync will not create the remote path for you — it aborts with
+    /// `directory not found` — so a first `init` against a path that does not exist yet
+    /// has to make it first.
+    pub fn mkdir(&self, path: &str) -> Result<()> {
+        self.run(&["mkdir", path]).map(|_| ())
+    }
+
     /// Remote names from `rclone listremotes`, without the trailing colon.
     pub fn list_remotes(&self) -> Result<Vec<String>> {
         Ok(self
@@ -262,7 +271,7 @@ impl Rclone {
     }
 
     /// Flags shared by every bisync invocation. See the module docs for `--force`.
-    pub fn bisync_base_args<'a>(&'a self, workdir: &'a str) -> Vec<&'a str> {
+    pub fn bisync_base_args<'a>(&'a self, workdir: &'a str, track_renames: bool) -> Vec<&'a str> {
         let mut args = vec![
             "bisync",
             "--workdir",
@@ -270,10 +279,6 @@ impl Rclone {
             // Disable rclone's percentage guard; lodestone applies its own, on true
             // deletes only, before ever reaching this point.
             "--force",
-            // Collapse moves into server-side renames instead of re-uploading.
-            "--track-renames",
-            "--track-renames-strategy",
-            "hash",
             // Never let rclone silently pick a winner. lodestone aborts on conflicts in
             // the plan phase; this is the backstop if one appears between plan and apply.
             "--conflict-resolve",
@@ -281,6 +286,16 @@ impl Rclone {
             "--stats",
             "0",
         ];
+        // A resync copies rather than syncs, and rclone logs `Ignoring --track-renames as
+        // it doesn't work with copy or move` at ERROR level when the flag is present —
+        // noise that also inflates rclone's error count. Rename tracking only means
+        // something on an ordinary bisync run.
+        if track_renames {
+            // Collapse moves into server-side renames instead of re-uploading.
+            args.push("--track-renames");
+            args.push("--track-renames-strategy");
+            args.push("hash");
+        }
         // bisync has its own --filters-file, which is what it fingerprints to decide
         // whether a resync is required.
         if let Some(f) = &self.filter_file {
@@ -298,7 +313,9 @@ impl Rclone {
         workdir: &str,
         extra: &[&str],
     ) -> Result<String> {
-        let mut args = self.bisync_base_args(workdir);
+        // A resync is the one run where rename tracking is meaningless.
+        let track_renames = !extra.contains(&"--resync");
+        let mut args = self.bisync_base_args(workdir, track_renames);
         args.push(path1);
         args.push(path2);
         args.extend_from_slice(extra);
@@ -383,6 +400,22 @@ mod tests {
     }
 
     #[test]
+    fn resync_omits_rename_tracking() {
+        // rclone logs an ERROR when --track-renames is passed to a copy-based run, which
+        // both adds noise and inflates its error count.
+        let r = Rclone {
+            binary: "rclone".into(),
+            filter_file: None,
+        };
+        let args = r.bisync_base_args("/tmp/wd", false);
+        assert!(!args.contains(&"--track-renames"));
+        assert!(!args.contains(&"--track-renames-strategy"));
+        // Everything else still applies.
+        assert!(args.contains(&"--force"));
+        assert!(args.contains(&"--conflict-resolve"));
+    }
+
+    #[test]
     fn session_name_length_accounts_for_both_sides() {
         // Regression guard for a failure found while running the rename harness under a
         // deep scratch directory: rclone died with "file name too long" because it
@@ -404,7 +437,7 @@ mod tests {
             binary: "rclone".into(),
             filter_file: None,
         };
-        let args = r.bisync_base_args("/tmp/wd");
+        let args = r.bisync_base_args("/tmp/wd", true);
         assert!(args.contains(&"--force"));
         assert!(args.contains(&"--track-renames"));
         assert!(args.contains(&"--conflict-resolve"));
@@ -425,7 +458,7 @@ mod tests {
             filter_file: None,
         }
         .with_filters("/cache/filters.txt");
-        let args = r.bisync_base_args("/tmp/wd");
+        let args = r.bisync_base_args("/tmp/wd", true);
         let i = args
             .iter()
             .position(|a| *a == "--filters-file")
