@@ -640,6 +640,27 @@ exercised end-to-end against an actual Drive remote, using a throwaway scratch f
 The `--track-renames` finding (§6.1) therefore holds on Drive, not just on a local
 filesystem — which is the claim the whole efficiency story rests on.
 
+### Verified across two real machines
+
+macOS (APFS, case-insensitive) and Fedora 43 (case-sensitive), sharing one Drive folder.
+This is the scenario §5.2 was designed around, and it could not be tested any other way:
+
+| Behaviour | Result |
+|---|---|
+| Onboarding the second machine from an existing remote | 12 files downloaded, `status` clean |
+| **Machine A reorganises 12 files; machine B runs `status`** | **12 renames, 0 true deletes, guard untripped** |
+| Machine B runs `pull` | 12 server-side moves, 0 transferred, **0 trashed** |
+| Both machines edit the same file | conflict detected on both, exit 10, neither side written, no conflict files created |
+| Filter fingerprint on both machines | identical (`fnv1a64:4df23090efe4d204`) |
+| Filesystem probe | correctly reports case-insensitive on macOS, case-sensitive on Fedora |
+
+The delete ceiling was left at its default of **10** while **12** files moved, so a
+misclassification would have tripped the guard and failed loudly rather than passing
+silently. Machine B has no local information about the move — its own tree never changed —
+so this exercises the symmetric hash matcher and nothing else. The full unit + e2e suite
+also passes on Linux, where the two name-collision tests that skip on APFS execute for
+real.
+
 Implemented and tested end-to-end (117 tests: 79 unit + 38 e2e against real rclone):
 
 - config loading, two-layer merge, validation

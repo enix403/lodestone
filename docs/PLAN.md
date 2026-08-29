@@ -212,14 +212,17 @@ Interactive-first, since there is no daemon whose logs you would read after the 
   `lode log` / `lode log --show <id>`. Rotate by count and age.
 - `lode diff <folder>` — the verbose per-file plan.
 
-## Step 9 — Multi-machine hardening
+## Step 9 — Multi-machine hardening ✅ MOSTLY DONE
 
-Only meaningful once a second machine is live.
-
-- Verify a reorganisation on machine A is absorbed cheaply by machine B (TDD §5.2). This is
-  covered by unit tests today; it needs a real two-machine run against Google Drive.
-- Optionally use Drive's stable file IDs (`lsjson`'s `ID` field) to raise remote rename
-  confidence above hash matching alone.
+- ✅ **A reorganisation on machine A is absorbed cheaply by machine B** (TDD §5.2), proven
+  with macOS + Fedora against one Drive folder: 12 renames, 0 true deletes, guard untripped
+  at its default ceiling of 10 while 12 files moved. Machine B's `pull` then performed 12
+  server-side moves with 0 transferred and 0 trashed.
+- ✅ Cross-machine conflict: both sides edited one file, both aborted with exit 10, neither
+  side written, no conflict files left behind.
+- ✅ Filter fingerprint parity and correct case-sensitivity probing on both platforms.
+- ⬜ Optionally use Drive's stable file IDs (`lsjson`'s `ID` field) to raise remote rename
+  confidence above hash matching alone. Not needed so far — hash matching has been exact.
 
 ## Step 10 — Distribution
 

@@ -121,8 +121,8 @@ impl Session {
 
         Ok(Applied {
             files,
-            moved: log.matches("Moved (server-side)").count(),
-            copied: log.matches("Copied (new)").count(),
+            moved: count_moves(&log),
+            copied: count_transfers(&log),
             deleted: log.matches("Deleted").count(),
             conflict_artifacts,
             trash_run: (trashed > 0).then(|| run.clone()),
@@ -174,6 +174,21 @@ impl Session {
             Err(_) => false,
         }
     }
+}
+
+/// Files bisync actually transferred, from its log.
+///
+/// rclone words this several ways — `Copied (new)` for a fresh file, `Copied (replaced
+/// existing)` for an overwrite, `Copied (server-side copy)` when the backend did it —
+/// so matching only the first undercounts and reports "0 transferred" for a run that
+/// plainly uploaded something. Matching the common prefix covers all of them.
+pub(crate) fn count_transfers(log: &str) -> usize {
+    log.matches("Copied (").count()
+}
+
+/// Files collapsed into server-side renames rather than re-transferred.
+pub(crate) fn count_moves(log: &str) -> usize {
+    log.matches("Moved (server-side)").count()
 }
 
 /// Refuse to plan when either side holds paths some filesystem in the fleet cannot tell
@@ -243,6 +258,28 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn transfer_counting_covers_every_wording_rclone_uses() {
+        // Observed forms. Counting only "Copied (new)" made a push that overwrote a file
+        // report "0 transferred", which is actively misleading.
+        let log = "\
+INFO  : inbox/a.pdf: Copied (new)
+INFO  : inbox/b.pdf: Copied (replaced existing)
+INFO  : inbox/c.pdf: Copied (server-side copy)
+INFO  : inbox/d.pdf: Moved (server-side) to: archive/d.pdf
+INFO  : archive/d.pdf: Renamed from \"inbox/d.pdf\"
+INFO  : inbox/e.pdf: Deleted
+";
+        assert_eq!(count_transfers(log), 3);
+        assert_eq!(count_moves(log), 1, "a move is not a transfer");
+    }
+
+    #[test]
+    fn counting_an_empty_log_yields_zero() {
+        assert_eq!(count_transfers(""), 0);
+        assert_eq!(count_moves(""), 0);
     }
 
     #[test]
