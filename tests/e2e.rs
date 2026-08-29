@@ -1123,3 +1123,49 @@ fn forget_leaves_no_empty_trash_directory() {
     assert!(!String::from_utf8_lossy(&out.stdout).contains("KEPT"));
     assert!(!w.root.join("state/lode/trash/docs").exists());
 }
+
+#[test]
+fn a_fresh_machine_downloads_an_existing_remote() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    // The onboarding case, and the opposite direction from every other test: the folder
+    // already exists on the remote and the local side is empty. rclone's empty-side
+    // refusal (which blocks an ordinary sync) does not apply to a resync, because that
+    // check lives in the delta phase a resync skips.
+    let w = World::new();
+    let remote = w.remote_of("docs");
+    std::fs::create_dir_all(remote.join("inbox")).unwrap();
+    for i in 1..=8 {
+        std::fs::write(remote.join(format!("inbox/doc{i}.pdf")), format!("doc {i}")).unwrap();
+    }
+    assert_eq!(count_files(&w.local), 0, "local must start empty");
+
+    let out = w.run(&["init"]);
+    assert_ok(&out, "init on a fresh machine");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("8 file(s)"));
+
+    assert_eq!(
+        count_files(&w.local),
+        8,
+        "the whole remote should have landed locally"
+    );
+    assert!(w.stdout(&["status"]).contains("up to date"));
+}
+
+fn count_files(dir: &Path) -> usize {
+    let mut n = 0;
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            n += count_files(&p);
+        } else {
+            n += 1;
+        }
+    }
+    n
+}
