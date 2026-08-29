@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::plan::Plan;
 use crate::rclone::{Rclone, Version};
 use crate::snapshot::{Listing, Snapshot};
-use crate::{filters, machine, paths};
+use crate::{filters, machine, paths, timestamp, trash};
 
 /// Substring rclone puts in the losing file's name when a conflict is materialised.
 /// Derived from bisync's default `--conflict-suffix`.
@@ -33,6 +33,9 @@ pub struct Applied {
     /// the plan phase refuses to proceed when it sees a conflict. If it is not empty, the
     /// TOCTOU window was hit and the user must look.
     pub conflict_artifacts: Vec<String>,
+    /// Trash run that caught anything removed or overwritten locally, if any was.
+    pub trash_run: Option<String>,
+    pub trashed: usize,
     pub log: String,
 }
 
@@ -78,15 +81,30 @@ impl Session {
         let workdir = paths::bisync_workdir(&f.name);
         std::fs::create_dir_all(&workdir).map_err(|e| Error::io(workdir.display(), e))?;
 
+        // Anything bisync would destroy on the local side goes here instead. Only the
+        // local side needs this: Drive keeps its own 30-day trash for the remote.
+        let (run, trash_dir) = trash::begin_run(&f.name, timestamp::now_unix())?;
+        let trash_arg = trash_dir.display().to_string();
+
         let log = self
             .rclone
             .bisync(
                 &f.local.display().to_string(),
                 &f.remote,
                 &workdir.display().to_string(),
-                &["-v"],
+                &["-v", "--backup-dir1", &trash_arg],
             )
-            .map_err(|e| self.explain_bisync_failure(f, e))?;
+            .map_err(|e| {
+                // Nothing was backed up if the run failed; do not leave an empty run behind.
+                let _ = trash::discard_if_empty(&trash_dir);
+                self.explain_bisync_failure(f, e)
+            })?;
+
+        let trashed = trash::list(&f.name)
+            .into_iter()
+            .filter(|e| e.run == run)
+            .count();
+        trash::discard_if_empty(&trash_dir)?;
 
         // Re-list after the fact rather than trusting the plan: bisync is the authority on
         // what actually landed.
@@ -105,6 +123,8 @@ impl Session {
             copied: log.matches("Copied (new)").count(),
             deleted: log.matches("Deleted").count(),
             conflict_artifacts,
+            trash_run: (trashed > 0).then(|| run.clone()),
+            trashed,
             log,
         })
     }

@@ -117,20 +117,36 @@ Delivered:
 Onboarding a machine is now: install rclone → `rclone config` once → symlink dotfiles →
 `lode add` (or `lode init` if the stanza is already in the shared config).
 
-## Step 5 — lodestone's own advisory lock
+## Step 5 — Local trash ✅ DONE
+
+The last real gap in the safety story. A genuine delete that passes the guard was only
+recoverable from Drive's trash, and only on the remote side.
+
+Delivered:
+
+- `timestamp` — the calendar arithmetic the rest of the tool needed anyway (snapshot
+  stamps, run directory names, run ages), extracted from `snapshot` and given a proper
+  inverse so run names can be parsed back for pruning.
+- `trash` — `--backup-dir1` into `$XDG_STATE_HOME/lode/trash/<folder>/<run>/`, catching
+  both locally-deleted and locally-overwritten files, with the relative path preserved.
+- Runs that caught nothing are removed immediately, so `trash list` never fills with empty
+  directories; the apply summary reports the run when it did catch something.
+- `lode trash list|restore|prune`. `restore` copies rather than moves, defaults to the most
+  recent copy, refuses to clobber without `--overwrite`, and says plainly that the restored
+  file is now a local change. `prune` defaults to 30 days and needs `--all` to take
+  everything.
+- 14 unit + 5 e2e tests.
+
+**Verified before building:** `--backup-dir1` does move locally-destroyed files into the
+backup directory with their relative path intact, as a server-side move.
+
+## Step 6 — lodestone's own advisory lock
 
 Prevents two terminals racing before rclone is ever invoked.
 
 - Per-folder lock under `XDG_STATE_HOME` holding pid + hostname + start time.
 - Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
 - Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
-
-## Step 6 — Local trash
-
-Deletions must be recoverable without going to Drive's web UI.
-
-- `--backup-dir1` into `$XDG_STATE_HOME/lode/trash/<folder>/<timestamp>/`.
-- `lode trash list|restore|prune`. No `--backup-dir2` (TDD §6.4).
 
 ## Step 7 — Run history and logging
 

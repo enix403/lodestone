@@ -48,6 +48,19 @@ lode sync                   # both directions, no assertion
 With no folder argument, every configured folder is planned first and the combined summary
 printed before anything is touched. Add `--dry-run` to stop there.
 
+Anything a sync would destroy on the local side — a file deleted on another machine, or a
+local copy overwritten by an incoming edit — is moved to a timestamped local trash instead
+of being lost:
+
+```console
+$ lode trash list
+silvermine
+  20260829T191500Z  (2026-08-29T19:15:00Z)
+        4.9 K  inbox/doc2.pdf
+
+$ lode trash restore silvermine inbox/doc2.pdf
+```
+
 Nothing is applied unless the plan is clean. Conflicts abort (exit 10), an unexpected mass
 deletion aborts (exit 11, overridable per-run with `--allow-deletes N`), and a violated
 directional assertion aborts (exit 12).
@@ -79,8 +92,8 @@ changes, so a per-machine list would force a resync every time you switched mach
 
 ## Status
 
-Usable. The plan engine and the apply phase both work end to end, covered by 74 tests
-including 26 that drive the real binary against real rclone with no network.
+Usable. The plan engine and the apply phase both work end to end, covered by 93 tests
+including 31 that drive the real binary against real rclone with no network.
 
-Still to come: run history, local trash, an advisory lock and the cross-platform `doctor`
-checks — see [the plan](docs/PLAN.md).
+Still to come: run history, an advisory lock and the cross-platform `doctor` checks — see
+[the plan](docs/PLAN.md).

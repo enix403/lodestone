@@ -109,10 +109,48 @@ enum Cmd {
         target: Option<String>,
     },
 
+    /// Inspect and recover files removed from the local side by a sync
+    Trash {
+        #[command(subcommand)]
+        sub: TrashCmd,
+    },
+
     /// Environment and configuration checks
     Doctor {
         #[command(subcommand)]
         sub: Option<DoctorCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrashCmd {
+    /// Show what is recoverable
+    List {
+        /// Folder name, or `.`. Omit for every configured folder.
+        target: Option<String>,
+    },
+    /// Put a trashed file back into the folder
+    Restore {
+        folder: String,
+        /// Path relative to the folder root, as shown by `lode trash list`
+        path: String,
+        /// Pick a specific run instead of the most recent copy
+        #[arg(long, value_name = "RUN")]
+        run: Option<String>,
+        /// Replace the file if it already exists
+        #[arg(long)]
+        overwrite: bool,
+    },
+    /// Delete old trash runs
+    Prune {
+        /// Folder name, or `.`. Omit for every configured folder.
+        target: Option<String>,
+        /// Age threshold in days (default 30)
+        #[arg(long, value_name = "DAYS")]
+        older_than: Option<u64>,
+        /// Delete every run regardless of age
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -173,6 +211,23 @@ fn run(cli: &Cli) -> Result<ExitCode> {
         Cmd::Unlock { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::unlock::run(&cfg, target.as_deref())
+        }
+        Cmd::Trash { sub } => {
+            let cfg = Config::load(cli.config.as_deref())?;
+            match sub {
+                TrashCmd::List { target } => cmd::trash::list(&cfg, target.as_deref(), cli.json),
+                TrashCmd::Restore {
+                    folder,
+                    path,
+                    run,
+                    overwrite,
+                } => cmd::trash::restore(&cfg, folder, path, run.as_deref(), *overwrite),
+                TrashCmd::Prune {
+                    target,
+                    older_than,
+                    all,
+                } => cmd::trash::prune(&cfg, target.as_deref(), *older_than, *all),
+            }
         }
         Cmd::Doctor { sub } => match sub {
             None => cmd::doctor::run(cli.config.as_deref()),

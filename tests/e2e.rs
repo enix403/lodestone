@@ -806,3 +806,157 @@ fn forget_rejects_an_unknown_folder() {
     assert_eq!(out.status.code(), Some(2), "usage error");
     assert!(String::from_utf8_lossy(&out.stderr).contains("not configured"));
 }
+
+// ---------------------------------------------------------------------------
+// Local trash
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_file_deleted_elsewhere_is_recoverable_from_local_trash() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+    let original = std::fs::read(w.local.join("inbox/doc2.pdf")).unwrap();
+
+    // Another machine deletes it; we pull the deletion down.
+    std::fs::remove_file(w.remote_of("docs").join("inbox/doc2.pdf")).unwrap();
+    assert_ok(&w.run(&["pull"]), "pull");
+    assert!(
+        !w.local.join("inbox/doc2.pdf").exists(),
+        "deletion should propagate"
+    );
+
+    // It is not gone — it is in the trash, at its original relative path.
+    let v = json(&w.run(&["trash", "list", "--json"]));
+    assert_eq!(v.as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v[0]["path"], "inbox/doc2.pdf", "{v}");
+    assert_eq!(v[0]["folder"], "docs");
+    assert!(v[0]["deleted_at"].as_str().unwrap().ends_with('Z'), "{v}");
+
+    // And it comes back byte-identical.
+    let out = w.run(&["trash", "restore", "docs", "inbox/doc2.pdf"]);
+    assert_ok(&out, "restore");
+    assert_eq!(
+        std::fs::read(w.local.join("inbox/doc2.pdf")).unwrap(),
+        original
+    );
+
+    // The restore is announced as a local change, and the backup is kept.
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("lode push docs"), "{text}");
+    assert_eq!(
+        json(&w.run(&["trash", "list", "--json"]))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn an_overwritten_local_file_is_recoverable() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // The remote wins because the local side has no competing change — but the bytes we
+    // had locally must still be recoverable.
+    std::fs::write(
+        w.remote_of("docs").join("inbox/doc1.pdf"),
+        b"newer remote content",
+    )
+    .unwrap();
+    assert_ok(&w.run(&["pull"]), "pull");
+    assert_eq!(
+        std::fs::read(w.local.join("inbox/doc1.pdf")).unwrap(),
+        b"newer remote content"
+    );
+
+    let v = json(&w.run(&["trash", "list", "--json"]));
+    assert_eq!(
+        v[0]["path"], "inbox/doc1.pdf",
+        "overwritten copy should be kept: {v}"
+    );
+}
+
+#[test]
+fn a_sync_that_destroys_nothing_leaves_no_trash_runs() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    std::fs::write(w.local.join("inbox/new.pdf"), b"purely additive").unwrap();
+    let out = w.run(&["push", "--json"]);
+    assert_ok(&out, "push");
+    assert_eq!(json(&out)[0]["trashed"], 0);
+
+    // Empty run directories would make `trash list` useless noise.
+    assert!(w.stdout(&["trash", "list"]).contains("trash is empty"));
+    let trash_root = w.root.join("state/lode/trash/docs");
+    let runs = std::fs::read_dir(&trash_root)
+        .map(|rd| rd.count())
+        .unwrap_or(0);
+    assert_eq!(runs, 0, "no empty run dirs should remain");
+}
+
+#[test]
+fn trash_prune_all_empties_the_trash() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::remove_file(w.remote_of("docs").join("inbox/doc1.pdf")).unwrap();
+    assert_ok(&w.run(&["pull"]), "pull");
+    assert_eq!(
+        json(&w.run(&["trash", "list", "--json"]))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Nothing is old enough for the default threshold.
+    let out = w.run(&["trash", "prune"]);
+    assert_ok(&out, "prune");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("nothing older than 30 day(s)"));
+    assert_eq!(
+        json(&w.run(&["trash", "list", "--json"]))
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // --all is the explicit escape hatch.
+    assert_ok(&w.run(&["trash", "prune", "--all"]), "prune --all");
+    assert!(w.stdout(&["trash", "list"]).contains("trash is empty"));
+}
+
+#[test]
+fn restoring_something_absent_fails_clearly() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    assert_ok(&w.run(&["init"]), "init");
+    let out = w.run(&["trash", "restore", "docs", "inbox/never-existed.pdf"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not in the trash"));
+}

@@ -351,10 +351,26 @@ belief was wrong. `lode sync` is the unrestricted escape hatch the error message
 - `--conflict-resolve none`: rclone must never silently pick a winner. lodestone aborts on
   conflicts in the plan phase; this flag is the backstop if one appears between plan and
   apply.
-- Deletions are backed up locally via `--backup-dir1` under `XDG_STATE_HOME`, managed with
-  `lode trash list|restore|prune`. There is deliberately **no** `--backup-dir2`: Google
-  Drive already has a 30-day trash, and a second remote trash directory is redundant
-  clutter that consumes quota.
+- **Local trash.** Every apply passes `--backup-dir1` pointing at a fresh timestamped run
+  directory, so anything bisync would destroy on the local side — a file deleted on another
+  machine, or a local copy overwritten by an incoming edit — is moved there instead. rclone
+  preserves the relative path, so the trash mirrors the folder's shape:
+
+  ```text
+  $XDG_STATE_HOME/lode/trash/silvermine/20260829T191500Z/inbox/doc2.pdf
+  ```
+
+  Managed with `lode trash list|restore|prune`. Run directories are named in ISO 8601 basic
+  format, which is filename-safe everywhere and sorts lexicographically into chronological
+  order. Runs that caught nothing are deleted immediately, so `trash list` is never noise.
+  `restore` copies rather than moves — a restore that was itself the mistake must not also
+  destroy the backup — and says plainly that the restored file is now a local change that
+  the next `push` will propagate. `prune` defaults to a 30-day threshold and requires
+  `--all` to take everything.
+
+  There is deliberately **no** `--backup-dir2`: Google Drive already has a 30-day trash, and
+  a second remote trash directory is redundant clutter that consumes quota. Only the local
+  side is covered, because it is the side with no other safety net.
 
 ### 6.5 Exit codes
 
@@ -430,6 +446,7 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 |---|---|
 | `$XDG_STATE_HOME/lode/machine.id` | this machine's identity |
 | `$XDG_STATE_HOME/lode/folders/<name>/snapshot.json` | the merge base |
+| `$XDG_STATE_HOME/lode/trash/<name>/<run>/` | locally-destroyed files, recoverable |
 | `$XDG_STATE_HOME/lode/logs/<name>/<ts>.log` | raw rclone logs *(planned)* |
 | `$XDG_CACHE_HOME/lode/bisync/<name>/` | bisync's own listings and locks |
 
@@ -574,7 +591,7 @@ glibc and is always correct.)
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (74 tests: 48 unit + 26 e2e against real rclone):
+Implemented and tested end-to-end (93 tests: 62 unit + 31 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -590,10 +607,12 @@ Implemented and tested end-to-end (74 tests: 48 unit + 26 e2e against real rclon
 - **`add` / `forget`**: format-preserving TOML editing via `toml_edit`, remote validated
   before anything is written, `$HOME`-relative paths stored as `~/...` for portability;
   `forget` never touches files
+- **local trash**: `--backup-dir1` into timestamped run directories, with
+  `lode trash list|restore|prune` (§6.4)
 - `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
   `lode doctor`, `lode doctor rename-test`
 
-Not yet implemented: `log`/`diff`, trash, lodestone's own advisory lock, and the
-cross-platform `doctor` checks in §9.
+Not yet implemented: `log`/`diff`, lodestone's own advisory lock, and the cross-platform
+`doctor` checks in §9.
 
 See `docs/PLAN.md`.

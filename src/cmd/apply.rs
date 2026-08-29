@@ -112,6 +112,12 @@ pub fn run(cfg: &Config, target: Option<&str>, opts: &Options) -> Result<ExitCod
                     "  {:<16} ok — {} moved server-side, {} transferred, {} file(s) total",
                     f.name, a.moved, a.copied, a.files
                 );
+                if let Some(run) = &a.trash_run {
+                    println!(
+                        "  {:<16} {} local file(s) moved to trash, run {run} — `lode trash list {}`",
+                        "", a.trashed, f.name
+                    );
+                }
                 // Should be unreachable: the plan aborts on conflicts. If it fires, the
                 // plan→apply window was hit and the user must look.
                 for p in &a.conflict_artifacts {
@@ -190,6 +196,7 @@ fn apply_json(
                         "folder": f.name, "ok": true, "applied": true,
                         "moved_server_side": a.moved, "transferred": a.copied,
                         "files": a.files, "conflict_artifacts": a.conflict_artifacts,
+                        "trash_run": a.trash_run, "trashed": a.trashed,
                         "plan": plan
                     }),
                     Err(SkipOrFail::Skipped(why)) => serde_json::json!({

@@ -22,5 +22,7 @@ pub mod session;
 pub mod snapshot;
 #[cfg(test)]
 pub(crate) mod testlock;
+pub mod timestamp;
+pub mod trash;
 
 pub use error::{Error, ExitCode, Result};
