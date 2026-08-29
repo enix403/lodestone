@@ -85,6 +85,11 @@ non-configurable rule set, so browsing a folder in Finder never pollutes the rem
 deliberately not configurable: bisync demands a full re-baseline whenever its filter set
 changes, so a per-machine list would force a resync every time you switched machines.
 
+`lode doctor` checks the things that break a mixed macOS/Linux fleet silently: filenames
+differing only in case or in Unicode normalisation, duplicate names on the remote, symlinks
+rclone will skip, and whether your filesystem is case-insensitive. Collisions abort a sync
+rather than warn — there is no safe automatic resolution for them.
+
 ## Documentation
 
 - [`docs/TDD.md`](docs/TDD.md) — design, rationale, rejected alternatives, limitations
@@ -92,8 +97,7 @@ changes, so a per-machine list would force a resync every time you switched mach
 
 ## Status
 
-Usable. The plan engine and the apply phase both work end to end, covered by 93 tests
-including 31 that drive the real binary against real rclone with no network.
+Usable. The plan engine and the apply phase both work end to end, covered by 112 tests
+including 35 that drive the real binary against real rclone with no network.
 
-Still to come: run history, an advisory lock and the cross-platform `doctor` checks — see
-[the plan](docs/PLAN.md).
+Still to come: run history and an advisory lock — see [the plan](docs/PLAN.md).

@@ -7,9 +7,10 @@
 use crate::config::Folder;
 use crate::error::{Error, Result};
 use crate::plan::Plan;
+use crate::rclone::bullet_list;
 use crate::rclone::{Rclone, Version};
 use crate::snapshot::{Listing, Snapshot};
-use crate::{filters, machine, paths, timestamp, trash};
+use crate::{filters, hazards, machine, paths, timestamp, trash};
 
 /// Substring rclone puts in the losing file's name when a conflict is materialised.
 /// Derived from bisync's default `--conflict-suffix`.
@@ -58,6 +59,7 @@ impl Session {
         let snapshot = Snapshot::load(&f.name, &self.machine_id)?;
         let local = self.local_listing(f)?;
         let remote = self.rclone.lsjson(&f.remote)?;
+        check_collisions(&f.name, &local, &remote)?;
         Ok(Plan::compute(&f.name, &snapshot.entries, &local, &remote))
     }
 
@@ -174,6 +176,38 @@ impl Session {
     }
 }
 
+/// Refuse to plan when either side holds paths some filesystem in the fleet cannot tell
+/// apart. Checked across the union of both sides, so a name created as NFC on Linux and as
+/// NFD on macOS is caught even though neither side alone looks wrong.
+pub(crate) fn check_collisions(folder: &str, local: &Listing, remote: &Listing) -> Result<()> {
+    let mut paths: Vec<String> = local.keys().chain(remote.keys()).cloned().collect();
+    paths.sort();
+    paths.dedup();
+
+    let found = hazards::name_collisions(&paths);
+    if !found.is_empty() {
+        // Label the whole report by the broadest cause present, so the message names the
+        // problem the user is most likely to hit first.
+        let kind = if found.iter().any(|c| c.kind == hazards::CollisionKind::Case) {
+            hazards::CollisionKind::Case
+        } else {
+            hazards::CollisionKind::Normalisation
+        };
+        let detail = found
+            .iter()
+            .map(|c| format!("  [{}]\n{}", c.kind.label(), bullet_list(&c.paths)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(Error::NameCollisions {
+            folder: folder.to_string(),
+            kind: kind.label(),
+            count: found.len(),
+            detail,
+        });
+    }
+    Ok(())
+}
+
 /// Remove bisync's lock files for a folder, after a run was killed mid-flight.
 ///
 /// Deliberately a separate, explicit command: a lock that clears itself is not a lock.
@@ -191,4 +225,87 @@ pub fn clear_lock(folder: &str) -> Result<Vec<String>> {
         }
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snapshot::Entry;
+
+    fn listing(paths: &[&str]) -> Listing {
+        paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                (
+                    p.to_string(),
+                    Entry::new(10 + i as u64, "t", Some(format!("h{i}"))),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_pair_of_listings_passes() {
+        let l = listing(&["inbox/a.pdf", "inbox/b.pdf"]);
+        let r = listing(&["inbox/a.pdf", "archive/c.pdf"]);
+        assert!(check_collisions("docs", &l, &r).is_ok());
+    }
+
+    #[test]
+    fn a_case_collision_within_one_side_is_refused() {
+        let l = listing(&["inbox/Report.pdf", "inbox/report.pdf"]);
+        let r = Listing::new();
+        let err = check_collisions("docs", &l, &r).unwrap_err();
+        match &err {
+            Error::NameCollisions { kind, count, .. } => {
+                assert_eq!(*kind, "case");
+                assert_eq!(*count, 1);
+            }
+            other => panic!("expected NameCollisions, got {other:?}"),
+        }
+        assert!(err.to_string().contains("Report.pdf"), "{err}");
+    }
+
+    #[test]
+    fn a_collision_spanning_the_two_sides_is_refused() {
+        // Neither side alone looks wrong: the Mac holds the decomposed name, Linux wrote
+        // the composed one. Only the union reveals the problem, which is why the check
+        // runs over both.
+        let l = listing(&["Re\u{301}sume\u{301}.pdf"]);
+        let r = listing(&["R\u{e9}sum\u{e9}.pdf"]);
+        assert!(
+            check_collisions("docs", &l, &l).is_ok(),
+            "one side alone is fine"
+        );
+        assert!(
+            check_collisions("docs", &r, &r).is_ok(),
+            "one side alone is fine"
+        );
+
+        let err = check_collisions("docs", &l, &r).unwrap_err();
+        assert!(
+            matches!(&err, Error::NameCollisions { kind, .. } if *kind == "unicode normalisation"),
+            "a pure NFC/NFD pair must be labelled as normalisation, not case: {err:?}"
+        );
+    }
+
+    #[test]
+    fn the_same_path_present_on_both_sides_is_not_a_collision() {
+        // The overwhelmingly common case: both sides hold the identical path. Deduping the
+        // union before grouping is what keeps this from being reported as a collision.
+        let l = listing(&["inbox/a.pdf", "inbox/b.pdf"]);
+        assert!(check_collisions("docs", &l, &l).is_ok());
+    }
+
+    #[test]
+    fn case_is_reported_in_preference_to_normalisation() {
+        // A pair differing in both should be described once, as the broader problem.
+        let l = listing(&["Re\u{301}sume\u{301}.pdf", "r\u{e9}sum\u{e9}.pdf"]);
+        let err = check_collisions("docs", &l, &Listing::new()).unwrap_err();
+        assert!(
+            matches!(&err, Error::NameCollisions { kind, count, .. } if *kind == "case" && *count == 1),
+            "{err:?}"
+        );
+    }
 }

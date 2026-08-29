@@ -14,6 +14,7 @@ pub mod config;
 pub mod configfile;
 pub mod error;
 pub mod filters;
+pub mod hazards;
 pub mod machine;
 pub mod paths;
 pub mod plan;

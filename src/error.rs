@@ -114,6 +114,31 @@ pub enum Error {
     )]
     EmptySide(String),
 
+    #[error(
+        "{location} contains {count} duplicate filename(s) — two objects sharing one path.\n\
+         Google Drive permits this; no local filesystem can represent it, so the sync cannot \
+         proceed.\n\
+         Resolve them with `rclone dedupe {location}`, then try again.\n{detail}"
+    )]
+    DuplicateNames {
+        location: String,
+        count: usize,
+        detail: String,
+    },
+
+    #[error(
+        "folder {folder:?} has {count} {kind} collision(s): distinct paths that some \
+         filesystem in your fleet cannot tell apart.\n\
+         Syncing them would duplicate, clobber or ping-pong files, so lodestone stops here.\n\
+         Rename one side of each pair, then try again.\n{detail}"
+    )]
+    NameCollisions {
+        folder: String,
+        kind: &'static str,
+        count: usize,
+        detail: String,
+    },
+
     #[error("io error at {path:?}: {source}")]
     Io {
         path: String,

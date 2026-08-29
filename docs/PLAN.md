@@ -140,7 +140,35 @@ Delivered:
 **Verified before building:** `--backup-dir1` does move locally-destroyed files into the
 backup directory with their relative path intact, as a server-side move.
 
-## Step 6 — lodestone's own advisory lock
+## Step 6 — Cross-platform name hazards ✅ DONE
+
+Brought forward: these are the silent-corruption classes, and they go live the moment a
+Linux machine shares a folder with the Mac.
+
+Delivered:
+
+- `hazards` — name-collision detection, symlink discovery, and a case-sensitivity probe.
+- Collisions are refused in the **plan phase**, over the union of both sides' listings: a
+  name written as NFC on Linux and NFD on macOS looks wrong on neither side alone.
+- Duplicate remote filenames are detected in `lsjson` itself. Collecting into a map would
+  have silently dropped one and hidden the problem; the adapter now counts and refuses,
+  pointing at `rclone dedupe`.
+- `doctor` reports symlinks (found without following them, so dangling links still show)
+  and probes whether the folder's filesystem is case-insensitive rather than guessing from
+  the platform.
+- 12 unit + 4 e2e tests.
+
+**Design flaw caught by a test.** The first version ran two passes — normalisation, then
+case. But the case pass normalises *before* folding, making it a strict superset, so the
+normalisation pass was unreachable dead code. Replaced with a single pass that labels each
+group by cause.
+
+**Note on coverage:** the two collision e2e tests detect that macOS APFS is case- and
+normalisation-insensitive and skip, because the collision cannot even be staged there. They
+exercise fully on Linux. The gate itself is covered unconditionally by unit tests over
+synthetic listings.
+
+## Step 7 — lodestone's own advisory lock
 
 Prevents two terminals racing before rclone is ever invoked.
 
@@ -148,7 +176,7 @@ Prevents two terminals racing before rclone is ever invoked.
 - Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
 - Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
 
-## Step 7 — Run history and logging
+## Step 8 — Run history and logging
 
 Interactive-first, since there is no daemon whose logs you would read after the fact.
 
@@ -157,13 +185,6 @@ Interactive-first, since there is no daemon whose logs you would read after the 
 - A run log (timestamp, command, plan counts, outcome, duration, exit code) behind
   `lode log` / `lode log --show <id>`. Rotate by count and age.
 - `lode diff <folder>` — the verbose per-file plan.
-
-## Step 8 — Cross-platform `doctor` checks
-
-Cheap, and they catch silent corruption classes.
-
-- NFC/NFD collisions; case-only collisions; duplicate remote filenames; symlink report.
-- Each aborts rather than warns — there is no safe automatic resolution.
 
 ## Step 9 — Multi-machine hardening
 

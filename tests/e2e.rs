@@ -960,3 +960,109 @@ fn restoring_something_absent_fails_clearly() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not in the trash"));
 }
+
+// ---------------------------------------------------------------------------
+// Cross-platform name hazards
+// ---------------------------------------------------------------------------
+
+#[test]
+fn case_only_collisions_stop_the_sync() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Two names a Mac cannot hold at once. On a case-insensitive filesystem the second
+    // write would just overwrite the first, so create the pair on the remote side.
+    std::fs::write(w.remote_of("docs").join("inbox/Report.pdf"), b"upper").unwrap();
+    std::fs::write(w.remote_of("docs").join("inbox/report.pdf"), b"lower").unwrap();
+    if !w.remote_of("docs").join("inbox/Report.pdf").exists()
+        || std::fs::read(w.remote_of("docs").join("inbox/Report.pdf")).unwrap() == b"lower"
+    {
+        eprintln!("skipping: filesystem is case-insensitive, cannot stage the collision");
+        return;
+    }
+
+    let out = w.run(&["sync"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("case collision"), "{text}");
+    assert!(text.contains("Report.pdf"), "{text}");
+    // Nothing was applied.
+    assert!(!w.local.join("inbox/Report.pdf").exists());
+}
+
+#[test]
+fn unicode_normalisation_collisions_stop_the_sync() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // The same visible name in both forms: composed, as Linux usually writes it, and
+    // decomposed, as macOS does. Different bytes, one name.
+    let nfc = "R\u{e9}sum\u{e9}.pdf";
+    let nfd = "Re\u{301}sume\u{301}.pdf";
+    std::fs::write(w.remote_of("docs").join(nfc), b"composed").unwrap();
+    std::fs::write(w.remote_of("docs").join(nfd), b"decomposed").unwrap();
+    if std::fs::read_dir(w.remote_of("docs"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().contains("sum"))
+        .count()
+        < 2
+    {
+        eprintln!("skipping: filesystem normalises filenames, cannot stage the collision");
+        return;
+    }
+
+    let out = w.run(&["sync"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("normalisation collision"), "{text}");
+    assert!(!w.local.join(nfc).exists() && !w.local.join(nfd).exists());
+}
+
+#[test]
+fn doctor_reports_symlinks_and_case_sensitivity() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    assert_ok(&w.run(&["init"]), "init");
+    std::os::unix::fs::symlink(w.local.join("inbox/doc1.pdf"), w.local.join("shortcut.pdf"))
+        .unwrap();
+
+    let text = w.stdout(&["doctor"]);
+    assert!(text.contains("docs: symlinks"), "{text}");
+    assert!(text.contains("shortcut.pdf"), "{text}");
+    assert!(text.contains("docs: filesystem"), "{text}");
+    assert!(text.contains("docs: name hazards"), "{text}");
+}
+
+#[test]
+fn an_ordinary_folder_reports_no_hazards() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+    let out = w.run(&["doctor"]);
+    assert_ok(&out, "doctor");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("all checks passed"), "{text}");
+    assert!(
+        text.contains("docs: symlinks       none") || text.contains("symlinks"),
+        "{text}"
+    );
+}

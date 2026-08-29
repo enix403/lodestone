@@ -97,6 +97,19 @@ fn flatten(p: &str) -> String {
         .collect()
 }
 
+/// Render paths as an indented list, truncated so an error stays readable.
+pub fn bullet_list(paths: &[String]) -> String {
+    const MAX: usize = 10;
+    let mut out = String::new();
+    for p in paths.iter().take(MAX) {
+        out.push_str(&format!("  - {p}\n"));
+    }
+    if paths.len() > MAX {
+        out.push_str(&format!("  ... and {} more\n", paths.len() - MAX));
+    }
+    out.trim_end().to_string()
+}
+
 #[derive(Debug, Clone)]
 pub struct Rclone {
     pub binary: PathBuf,
@@ -223,14 +236,29 @@ impl Rclone {
         args.push(path);
         let raw = self.run(&args)?;
         let items: Vec<LsJsonItem> = serde_json::from_str(&raw)?;
-        Ok(items
-            .into_iter()
-            .filter(|i| !i.is_dir)
-            .map(|i| {
-                let hash = i.hashes.get(HASH_TYPE).cloned();
-                (i.path, Entry::new(i.size.max(0) as u64, i.mod_time, hash))
-            })
-            .collect())
+
+        // Google Drive permits two objects with the same name in one directory; no POSIX
+        // filesystem can. Collecting straight into a map would silently drop one and hide
+        // the problem, so duplicates are detected here and refused.
+        let mut listing = Listing::new();
+        let mut duplicates: Vec<String> = Vec::new();
+        for i in items.into_iter().filter(|i| !i.is_dir) {
+            let hash = i.hashes.get(HASH_TYPE).cloned();
+            let entry = Entry::new(i.size.max(0) as u64, i.mod_time, hash);
+            if listing.insert(i.path.clone(), entry).is_some() {
+                duplicates.push(i.path);
+            }
+        }
+        if !duplicates.is_empty() {
+            duplicates.sort();
+            duplicates.dedup();
+            return Err(Error::DuplicateNames {
+                location: path.to_string(),
+                count: duplicates.len(),
+                detail: bullet_list(&duplicates),
+            });
+        }
+        Ok(listing)
     }
 
     /// Flags shared by every bisync invocation. See the module docs for `--force`.

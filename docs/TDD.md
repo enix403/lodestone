@@ -513,6 +513,33 @@ Real risks for a macOS + Linux fleet holding a document archive:
    paths breach the 255-byte per-component limit and the run dies with `file name too long`
    before doing any work. `doctor` computes the projected length per folder and reports it.
 
+**Implemented as follows.**
+
+*Refused before anything is written*, in the plan phase, over the **union** of both sides'
+listings — because a name created as NFC on Linux and as NFD on macOS looks wrong on
+neither side alone:
+
+- **Name collisions** (items 1 and 2) — one pass, not two. Grouping by "normalised **and**
+  case-folded" is the broadest predicate, since a case-insensitive filesystem is also
+  normalisation-insensitive in practice; a second, narrower pass over normalisation alone
+  would only re-report the same pairs. An earlier two-pass version had exactly that bug —
+  the normalisation pass was unreachable dead code — caught by a unit test. Each group is
+  instead *labelled* by cause: if every path in it shares one NFC form, case is not
+  involved and it is a pure normalisation collision.
+- **Duplicate remote filenames** (item 3) — detected in `lsjson` itself. Collecting a
+  listing straight into a map would silently drop one of a duplicate pair and hide the
+  problem entirely, so the adapter counts them and refuses, pointing at `rclone dedupe`.
+
+*Reported but not fatal*, in `lode doctor`:
+
+- **Symlinks** (item 4), found with `symlink_metadata` so links are not followed and
+  dangling ones are still seen. rclone skips them by design; the point is only that
+  silently absent files should not be a surprise.
+- **Filesystem case sensitivity**, answered by *probe* rather than guessed from the
+  platform: APFS is case-insensitive by default but can be formatted either way, and a
+  Linux folder may sit on exFAT or NTFS.
+- **Projected bisync workdir filename length** (item 5).
+
 ### 9.1 Filters
 
 A **hardcoded, non-configurable** list of 12 exclusions is compiled into the binary,
@@ -591,7 +618,7 @@ glibc and is always correct.)
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (93 tests: 62 unit + 31 e2e against real rclone):
+Implemented and tested end-to-end (112 tests: 77 unit + 35 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -609,10 +636,12 @@ Implemented and tested end-to-end (93 tests: 62 unit + 31 e2e against real rclon
   `forget` never touches files
 - **local trash**: `--backup-dir1` into timestamped run directories, with
   `lode trash list|restore|prune` (§6.4)
+- **cross-platform hazards**: name-collision and duplicate-name gates in the plan phase;
+  symlink and case-sensitivity reporting in `doctor` (§9)
 - `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
-  `lode doctor`, `lode doctor rename-test`
+  `lode trash list|restore|prune`, `lode add`, `lode forget`, `lode doctor`,
+  `lode doctor rename-test`
 
-Not yet implemented: `log`/`diff`, lodestone's own advisory lock, and the cross-platform
-`doctor` checks in §9.
+Not yet implemented: `log`/`diff` and lodestone's own advisory lock.
 
 See `docs/PLAN.md`.

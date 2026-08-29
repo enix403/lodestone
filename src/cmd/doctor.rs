@@ -1,6 +1,7 @@
 use lodestone::config::Config;
 use lodestone::error::ExitCode;
 use lodestone::rclone::{session_name_len, Rclone, FILENAME_LIMIT, MIN_VERSION};
+use lodestone::session::Session;
 use lodestone::snapshot::Snapshot;
 use lodestone::{machine, paths, Result};
 use std::path::Path;
@@ -58,6 +59,9 @@ pub fn run(config: Option<&Path>) -> Result<ExitCode> {
     check("state dir", Ok(paths::state_dir().display().to_string()));
     check("cache dir", Ok(paths::cache_dir().display().to_string()));
 
+    // Built once, and only if rclone is usable; every listing-based check shares it.
+    let session = Session::new().ok();
+
     println!("\nconfiguration");
     match Config::load(config) {
         Err(e) => check("config", Err(e.to_string())),
@@ -111,6 +115,63 @@ pub fn run(config: Option<&Path>) -> Result<ExitCode> {
                         Err(format!("no snapshot — run `lode init {}`", f.name))
                     },
                 );
+
+                // Symlinks are reported but never fatal: rclone skips them by design, and
+                // the point is only that silently-absent files should not be a surprise.
+                if f.local.is_dir() {
+                    let links = lodestone::hazards::find_symlinks(&f.local);
+                    check(
+                        &format!("{}: symlinks", f.name),
+                        Ok(if links.is_empty() {
+                            "none".to_string()
+                        } else {
+                            format!(
+                                "{} found — rclone skips these, so they are absent from the remote: {}",
+                                links.len(),
+                                links
+                                    .iter()
+                                    .take(3)
+                                    .map(|p| p.display().to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        }),
+                    );
+                    check(
+                        &format!("{}: filesystem", f.name),
+                        Ok(match lodestone::hazards::is_case_insensitive(&f.local) {
+                            Some(true) => {
+                                "case-insensitive (two names differing only in case cannot coexist)"
+                                    .into()
+                            }
+                            Some(false) => "case-sensitive".to_string(),
+                            None => "could not probe case sensitivity".to_string(),
+                        }),
+                    );
+                }
+
+                // The listing-based hazards need both sides, so they only run for a folder
+                // that is initialised and reachable.
+                if Snapshot::exists(&f.name) && f.local.is_dir() {
+                    match session.as_ref().map(|s| s.plan(f)) {
+                        Some(Ok(_)) => {
+                            check(&format!("{}: name hazards", f.name), Ok("none".into()))
+                        }
+                        Some(Err(e)) => match &e {
+                            lodestone::Error::NameCollisions { .. }
+                            | lodestone::Error::DuplicateNames { .. } => {
+                                check(&format!("{}: name hazards", f.name), Err(e.to_string()))
+                            }
+                            // Anything else (unreachable remote, stale snapshot) is not a
+                            // name hazard and is reported by its own check.
+                            _ => check(
+                                &format!("{}: listings", f.name),
+                                Err(first_line(&e.to_string())),
+                            ),
+                        },
+                        None => {}
+                    }
+                }
             }
         }
     }
@@ -123,4 +184,8 @@ pub fn run(config: Option<&Path>) -> Result<ExitCode> {
         println!("all checks passed.");
         Ok(ExitCode::Ok)
     }
+}
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or_default().to_string()
 }
