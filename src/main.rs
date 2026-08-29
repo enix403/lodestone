@@ -135,6 +135,20 @@ enum Cmd {
         sub: TrashCmd,
     },
 
+    /// Show past runs, and rclone's raw output for one of them
+    Log {
+        /// Folder name. Omit for every configured folder.
+        target: Option<String>,
+
+        /// How many runs to show
+        #[arg(short = 'n', long, default_value_t = 20, value_name = "N")]
+        limit: usize,
+
+        /// Print the stored rclone log for this run id
+        #[arg(long, value_name = "ID")]
+        show: Option<String>,
+    },
+
     /// Environment and configuration checks
     Doctor {
         #[command(subcommand)]
@@ -258,6 +272,14 @@ fn run(cli: &Cli) -> Result<ExitCode> {
                     all,
                 } => cmd::trash::prune(&cfg, target.as_deref(), *older_than, *all),
             }
+        }
+        Cmd::Log {
+            target,
+            limit,
+            show,
+        } => {
+            let cfg = Config::load(cli.config.as_deref())?;
+            cmd::log::run(&cfg, target.as_deref(), *limit, show.as_deref(), cli.json)
         }
         Cmd::Doctor { sub } => match sub {
             None => cmd::doctor::run(cli.config.as_deref()),

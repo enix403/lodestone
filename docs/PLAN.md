@@ -202,15 +202,27 @@ Prevents two terminals racing before rclone is ever invoked.
 - Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
 - Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
 
-## Step 8 — Run history and logging
+## Step 8 — Run history and logging ✅ DONE
 
-Interactive-first, since there is no daemon whose logs you would read after the fact.
+The observability gap: rclone's raw output was discarded entirely on success, so a run that
+looked odd left nothing to inspect.
 
-- Clean summary in the foreground; raw rclone output to
-  `$XDG_STATE_HOME/lode/logs/<folder>/<ts>.log`, surfaced on `-v` or on failure.
-- A run log (timestamp, command, plan counts, outcome, duration, exit code) behind
-  `lode log` / `lode log --show <id>`. Rotate by count and age.
-- `lode diff <folder>` — the verbose per-file plan.
+Delivered:
+
+- `runlog` — append-only JSONL history plus per-run raw rclone logs under
+  `$XDG_STATE_HOME/lode/logs/<folder>/<id>.log`, pruned to the newest 50 per folder.
+- Every mutating run is recorded, including the ones that were skipped or failed, with the
+  reason preserved — that is precisely what you want to look up later.
+- `lode log [folder] [-n N]` and `lode log --show <id>`.
+- Recording never fails the command it is recording.
+- 6 unit + 4 e2e tests.
+
+**Deviation from the design:** JSONL rather than SQLite. At ~30 runs a month there is
+nothing to index, a torn final line from a killed process is skipped on read rather than
+corrupting the history, and it costs no dependency.
+
+**Dropped:** `lode diff`. `status` already lists every affected path and `compare` covers
+the snapshot-free case, so it would have duplicated one or the other.
 
 ## Step 9 — Multi-machine hardening ✅ MOSTLY DONE
 

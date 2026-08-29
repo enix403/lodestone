@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod folders;
 pub mod forget;
 pub mod init;
+pub mod log;
 pub mod rename_test;
 pub mod render;
 pub mod resync;

@@ -97,7 +97,8 @@ rather than warn — there is no safe automatic resolution for them.
 
 ## Status
 
-Usable. The plan engine and the apply phase both work end to end, covered by 132 tests
-including 46 that drive the real binary against real rclone with no network.
+Usable. The plan engine and the apply phase both work end to end, covered by 142 tests
+including 50 that drive the real binary against real rclone with no network.
 
-Still to come: run history and an advisory lock — see [the plan](docs/PLAN.md).
+Still to come: an advisory lock against two terminals racing — see
+[the plan](docs/PLAN.md).

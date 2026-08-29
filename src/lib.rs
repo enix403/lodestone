@@ -19,6 +19,7 @@ pub mod machine;
 pub mod paths;
 pub mod plan;
 pub mod rclone;
+pub mod runlog;
 pub mod session;
 pub mod snapshot;
 #[cfg(test)]

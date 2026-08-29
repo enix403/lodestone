@@ -499,7 +499,8 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 | `$XDG_STATE_HOME/lode/machine.id` | this machine's identity |
 | `$XDG_STATE_HOME/lode/folders/<name>/snapshot.json` | the merge base |
 | `$XDG_STATE_HOME/lode/trash/<name>/<run>/` | locally-destroyed files, recoverable |
-| `$XDG_STATE_HOME/lode/logs/<name>/<ts>.log` | raw rclone logs *(planned)* |
+| `$XDG_STATE_HOME/lode/logs/<name>/<id>.log` | raw rclone output, newest 50 per folder |
+| `$XDG_STATE_HOME/lode/runs.jsonl` | run history |
 | `$XDG_CACHE_HOME/lode/bisync/<name>/` | bisync's own listings and locks |
 
 ---
@@ -515,8 +516,7 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 | `lode push [folder\|.]` | Plan → apply. Aborts on incoming changes. |
 | `lode pull [folder\|.]` | Plan → apply. Aborts on outgoing changes. |
 | `lode compare [folder\|.]` | Two-way diff of the sides. Needs no baseline. |
-| `lode diff <folder>` | Verbose per-file plan (`status` is the summary). |
-| `lode log [--show ID]` | Past runs and their raw logs. |
+| `lode log [folder] [-n N] [--show ID]` | Past runs and their raw rclone output. |
 
 **Setup**
 
@@ -714,7 +714,30 @@ so this exercises the symmetric hash matcher and nothing else. The full unit + e
 also passes on Linux, where the two name-collision tests that skip on APFS execute for
 real.
 
-Implemented and tested end-to-end (132 tests: 86 unit + 46 e2e against real rclone):
+### Observability
+
+Interactive-first, because there is no daemon whose logs you would read after the fact:
+the foreground prints a clean summary, and rclone's raw output is written to
+`$XDG_STATE_HOME/lode/logs/<folder>/<id>.log` for when something looks wrong.
+
+Every mutating run appends a record — timestamp, command, plan summary, outcome, counts,
+duration, and the reason when it was skipped or failed. `lode log` renders them,
+`lode log --show <id>` prints the stored rclone output.
+
+Storage is **append-only JSONL**, not the SQLite the design originally called for. At
+roughly thirty mutating runs a month there is nothing to index; an append is atomic enough
+to survive a kill mid-write, since a torn final line is skipped on read rather than making
+the history unreadable; and it costs no dependency and stays greppable. Logs are pruned to
+the newest 50 per folder, and the history file is trimmed once it exceeds a thousand
+records.
+
+Recording never fails a command: losing a history entry is annoying, losing the sync result
+because the history could not be written would be absurd.
+
+`lode diff` was dropped from the design. `status` already lists every affected path, and
+`compare` covers the snapshot-free case, so `diff` would have duplicated one or the other.
+
+Implemented and tested end-to-end (142 tests: 92 unit + 50 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -743,6 +766,8 @@ Implemented and tested end-to-end (132 tests: 86 unit + 46 e2e against real rclo
 - **`lode resync <folder> --i-understand`** with an `init` guard against accidental
   re-baselining, and **`lode compare`**, the snapshot-free two-way diff (§6.5)
 
-Not yet implemented: `log`/`diff` and lodestone's own advisory lock.
+- **run history and logging**: `lode log`, raw rclone output per run, rotation
+
+Not yet implemented: lodestone's own advisory lock.
 
 See `docs/PLAN.md`.

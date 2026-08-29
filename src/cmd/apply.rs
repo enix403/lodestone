@@ -15,7 +15,7 @@ use lodestone::config::{Config, Folder};
 use lodestone::error::ExitCode;
 use lodestone::plan::{Direction, Plan};
 use lodestone::session::Session;
-use lodestone::{Error, Result};
+use lodestone::{runlog, timestamp, Error, Result};
 
 pub struct Options {
     pub direction: Direction,
@@ -74,22 +74,34 @@ pub fn run(cfg: &Config, target: Option<&str>, opts: &Options) -> Result<ExitCod
     // --- Apply only the folders whose plan is clean. ---
     let mut results = Vec::new();
     for (f, res, gate) in &planned {
+        let summary = res.as_ref().map(|p| p.summary()).unwrap_or_default();
+        let started = std::time::Instant::now();
+
         let Ok(plan) = res else {
-            results.push((*f, Err(SkipOrFail::Skipped("plan failed".into()))));
+            let why = "plan failed".to_string();
+            record(f, opts, "skipped", &summary, &why, started, None);
+            results.push((*f, Err(SkipOrFail::Skipped(why))));
             continue;
         };
         if let Some(e) = gate {
-            results.push((*f, Err(SkipOrFail::Skipped(first_line(&e.to_string())))));
+            let why = first_line(&e.to_string());
+            record(f, opts, "skipped", &summary, &why, started, None);
+            results.push((*f, Err(SkipOrFail::Skipped(why))));
             continue;
         }
         if plan.is_clean() {
+            record(f, opts, "clean", &summary, "", started, None);
             results.push((*f, Ok(None)));
             continue;
         }
         match session.apply(f) {
-            Ok(applied) => results.push((*f, Ok(Some(applied)))),
+            Ok(applied) => {
+                record(f, opts, "applied", &summary, "", started, Some(&applied));
+                results.push((*f, Ok(Some(applied))));
+            }
             Err(e) => {
                 worst = worse(worst, e.exit_code());
+                record(f, opts, "failed", &summary, &e.to_string(), started, None);
                 results.push((*f, Err(SkipOrFail::Failed(e))));
             }
         }
@@ -133,6 +145,48 @@ pub fn run(cfg: &Config, target: Option<&str>, opts: &Options) -> Result<ExitCod
     }
 
     Ok(worst)
+}
+
+/// Append a run to the history, storing rclone's raw output when there was any.
+///
+/// Never fails the command: losing a history entry is annoying, losing the sync result
+/// because the history could not be written would be absurd.
+fn record(
+    f: &Folder,
+    opts: &Options,
+    outcome: &str,
+    summary: &str,
+    detail: &str,
+    started: std::time::Instant,
+    applied: Option<&lodestone::session::Applied>,
+) {
+    let at = timestamp::now_unix();
+    let id = runlog::new_id(&f.name, at);
+    let has_log = match applied {
+        Some(a) => runlog::write_log(&f.name, &id, &a.log).is_ok(),
+        None => false,
+    };
+    let rec = runlog::Record {
+        id,
+        at,
+        folder: f.name.clone(),
+        command: match opts.direction {
+            Direction::Both => "sync",
+            Direction::Push => "push",
+            Direction::Pull => "pull",
+        }
+        .to_string(),
+        outcome: outcome.to_string(),
+        exit_code: 0,
+        summary: summary.to_string(),
+        moved: applied.map(|a| a.moved).unwrap_or(0),
+        transferred: applied.map(|a| a.copied).unwrap_or(0),
+        trashed: applied.map(|a| a.trashed).unwrap_or(0),
+        duration_ms: started.elapsed().as_millis() as u64,
+        detail: (!detail.is_empty()).then(|| first_line(detail)),
+        has_log,
+    };
+    let _ = runlog::append(&rec);
 }
 
 enum SkipOrFail {

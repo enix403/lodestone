@@ -1349,3 +1349,105 @@ fn compare_reports_identical_sides() {
     let text = w.stdout(&["compare"]);
     assert!(text.contains("both sides identical (4 file(s))"), "{text}");
 }
+
+// ---------------------------------------------------------------------------
+// Run history
+// ---------------------------------------------------------------------------
+
+#[test]
+fn runs_are_recorded_with_their_raw_rclone_log() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    assert_ok(&w.run(&["init"]), "init");
+
+    std::fs::write(w.local.join("inbox/new.pdf"), b"something new").unwrap();
+    assert_ok(&w.run(&["push"]), "push");
+    // A second run that changes nothing, to check both outcomes are distinguishable.
+    assert_ok(&w.run(&["sync"]), "sync");
+
+    let v = json(&w.run(&["log", "--json"]));
+    let runs = v.as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{v}");
+    // Newest first.
+    assert_eq!(runs[0]["command"], "sync");
+    assert_eq!(runs[0]["outcome"], "clean");
+    assert_eq!(runs[1]["command"], "push");
+    assert_eq!(runs[1]["outcome"], "applied");
+    assert_eq!(runs[1]["transferred"], 1);
+    assert_eq!(runs[1]["has_log"], true);
+
+    // The raw rclone output is retrievable for the run that did something.
+    let id = runs[1]["id"].as_str().unwrap();
+    let out = w.run(&["log", "--show", id]);
+    assert_ok(&out, "log --show");
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(body.contains("new.pdf"), "{body}");
+
+    // A run that changed nothing has no log, and says so rather than printing nothing.
+    let clean_id = runs[0]["id"].as_str().unwrap();
+    let out = w.run(&["log", "--show", clean_id]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no stored log"));
+}
+
+#[test]
+fn a_blocked_run_is_recorded_with_the_reason() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 6);
+    assert_ok(&w.run(&["init"]), "init");
+    for i in 1..=5 {
+        std::fs::remove_file(w.local.join(format!("inbox/doc{i}.pdf"))).unwrap();
+    }
+    assert_eq!(w.run(&["sync"]).status.code(), Some(11));
+
+    let v = json(&w.run(&["log", "--json"]));
+    assert_eq!(v[0]["outcome"], "skipped", "{v}");
+    assert!(
+        v[0]["detail"].as_str().unwrap().contains("delete guard"),
+        "the reason must be recoverable later: {v}"
+    );
+}
+
+#[test]
+fn log_scopes_to_a_folder_and_rejects_an_unknown_one() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::with_folders(&["docs", "notes"]);
+    w.seed_in("docs", "inbox", 2);
+    w.seed_in("notes", "inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::write(w.local_of("docs").join("inbox/x.pdf"), b"x").unwrap();
+    assert_ok(&w.run(&["sync"]), "sync");
+
+    assert_eq!(
+        json(&w.run(&["log", "--json"])).as_array().unwrap().len(),
+        2
+    );
+    let scoped = json(&w.run(&["log", "docs", "--json"]));
+    assert_eq!(scoped.as_array().unwrap().len(), 1);
+    assert_eq!(scoped[0]["folder"], "docs");
+
+    let out = w.run(&["log", "nope"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn log_is_empty_before_anything_runs() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    assert!(w.stdout(&["log"]).contains("no runs recorded yet"));
+}
