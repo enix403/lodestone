@@ -498,9 +498,16 @@ Real risks for a macOS + Linux fleet holding a document archive:
 
 ### 9.1 Filters
 
-A **hardcoded, non-configurable** list is compiled into the binary: `.DS_Store`, `._*`,
-`.Spotlight-V100`, `.fseventsd`, `.Trashes`, `.TemporaryItems`. macOS creates `.DS_Store`
-in every directory opened in Finder, so *some* filtering is mandatory in a mixed fleet.
+A **hardcoded, non-configurable** list of 12 exclusions is compiled into the binary,
+covering macOS (`.DS_Store`, `._*`, `.Spotlight-V100`, `.fseventsd`, `.Trashes`,
+`.TemporaryItems`, `.apdisk`), Linux desktops (`.directory`, `.Trash-*`) and Windows
+(`Thumbs.db`, `desktop.ini`, `~$*`) in case such a file ever lands on the remote. macOS
+creates `.DS_Store` in every directory opened in Finder, so *some* filtering is mandatory
+in a mixed fleet.
+
+The same filter file is applied to **both** the listing (`--filter-from` on `lsjson`) and
+the sync (`--filters-file` on bisync). If the plan phase saw files that bisync then
+filtered out, the two would disagree about what changed.
 
 Making it non-configurable is deliberate and is **safer** than a configurable filter set:
 bisync fingerprints its filters and demands a `--resync` when they change, so a filter set
@@ -512,7 +519,14 @@ A real filter engine and `.lodeignore` are explicitly deferred. `.lodeignore` *i
 synced folder is tempting (it travels with the data) but was rejected: editing it on one
 machine would force a resync everywhere.
 
-*Status: designed, not yet implemented.*
+The rule set's fingerprint (FNV-1a over the rendered rules) is recorded in every snapshot.
+When bisync demands a resync, lodestone compares fingerprints and reports *"the built-in
+filter set changed since this folder was initialised"* rather than passing rclone's
+cryptic demand through.
+
+**`lode init` must baseline under the same filters as every later run.** Baselining
+unfiltered and then syncing filtered makes bisync demand a resync on the very next command
+— a bug this design hit in development, caught by the end-to-end tests.
 
 ---
 
@@ -560,7 +574,7 @@ glibc and is always correct.)
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (52 tests: 35 unit + 17 e2e against real rclone):
+Implemented and tested end-to-end (60 tests: 40 unit + 20 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -571,10 +585,12 @@ Implemented and tested end-to-end (52 tests: 35 unit + 17 e2e against real rclon
 - **the apply phase**: `sync` / `push` / `pull` with `--dry-run` and `--allow-deletes`,
   plan-all-then-apply fan-out with per-folder failure isolation, snapshot advanced only on
   success, actionable mapping of expected bisync failures
+- **filters**: compiled-in OS-junk exclusions applied to both listing and sync, with the
+  fingerprint recorded in the snapshot (§9.1)
 - `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
   `lode doctor`, `lode doctor rename-test`
 
 Not yet implemented: `add`/`forget`, `log`/`diff`, trash, lodestone's own advisory lock,
-filters, and the cross-platform `doctor` checks in §9.
+and the cross-platform `doctor` checks in §9.
 
 See `docs/PLAN.md`.

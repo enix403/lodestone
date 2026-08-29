@@ -47,6 +47,14 @@ pub fn run(config: Option<&Path>) -> Result<ExitCode> {
         "machine id",
         machine::machine_id().map_err(|e| e.to_string()),
     );
+    check(
+        "filters",
+        Ok(format!(
+            "{} built-in rule(s), {}",
+            lodestone::filters::RULES.len(),
+            lodestone::filters::fingerprint()
+        )),
+    );
     check("state dir", Ok(paths::state_dir().display().to_string()));
     check("cache dir", Ok(paths::cache_dir().display().to_string()));
 

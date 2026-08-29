@@ -12,6 +12,7 @@
 
 pub mod config;
 pub mod error;
+pub mod filters;
 pub mod machine;
 pub mod paths;
 pub mod plan;

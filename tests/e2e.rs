@@ -571,3 +571,77 @@ fn unlock_clears_a_leftover_bisync_lock() {
     assert!(!lock.exists());
     assert!(w.stdout(&["unlock", "docs"]).contains("no lock held"));
 }
+
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+#[test]
+fn os_junk_never_reaches_the_remote() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 3);
+    // Exactly what Finder leaves behind in every directory it opens.
+    std::fs::write(w.local.join(".DS_Store"), b"finder junk").unwrap();
+    std::fs::write(w.local.join("inbox/.DS_Store"), b"more finder junk").unwrap();
+    std::fs::write(w.local.join("inbox/._doc1.pdf"), b"appledouble").unwrap();
+
+    let out = w.run(&["init"]);
+    assert_ok(&out, "init");
+    // Only the three real documents are counted, not the junk.
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("3 file(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    assert!(!w.remote_of("docs").join(".DS_Store").exists());
+    assert!(!w.remote_of("docs").join("inbox/.DS_Store").exists());
+    assert!(!w.remote_of("docs").join("inbox/._doc1.pdf").exists());
+}
+
+#[test]
+fn junk_appearing_later_does_not_register_as_a_change() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Browsing the folder in Finder must not make the tool think there is work to do.
+    std::fs::write(w.local.join("inbox/.DS_Store"), b"junk").unwrap();
+    std::fs::write(w.local.join(".directory"), b"kde junk").unwrap();
+    std::fs::write(w.remote_of("docs").join("Thumbs.db"), b"windows junk").unwrap();
+
+    let out = w.run(&["status"]);
+    assert_ok(&out, "status");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("up to date"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn the_filter_fingerprint_is_recorded_in_the_snapshot() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 1);
+    assert_ok(&w.run(&["init"]), "init");
+
+    let snap = w.root.join("state/lode/folders/docs/snapshot.json");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&snap).unwrap()).unwrap();
+    let fp = v["filters"].as_str().unwrap();
+    assert!(fp.starts_with("fnv1a64:"), "{v}");
+    // doctor must report the same fingerprint, so a mismatch can be diagnosed by eye.
+    assert!(w.stdout(&["doctor"]).contains(fp));
+}

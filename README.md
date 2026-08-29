@@ -61,6 +61,11 @@ remote = "per-gdrive:Silvermine"
 Machine-specific overrides go in a gitignored `config.local.toml`, so the main file can
 live in a dotfiles repo.
 
+OS junk (`.DS_Store`, `._*`, `Thumbs.db`, `.directory`, …) is excluded by a built-in,
+non-configurable rule set, so browsing a folder in Finder never pollutes the remote. It is
+deliberately not configurable: bisync demands a full re-baseline whenever its filter set
+changes, so a per-machine list would force a resync every time you switched machines.
+
 ## Documentation
 
 - [`docs/TDD.md`](docs/TDD.md) — design, rationale, rejected alternatives, limitations
@@ -68,8 +73,8 @@ live in a dotfiles repo.
 
 ## Status
 
-Usable. The plan engine and the apply phase both work end to end, covered by 52 tests
-including 17 that drive the real binary against real rclone with no network.
+Usable. The plan engine and the apply phase both work end to end, covered by 60 tests
+including 20 that drive the real binary against real rclone with no network.
 
-Still to come: `add`/`forget`, run history, local trash, filters and the cross-platform
-`doctor` checks — see [the plan](docs/PLAN.md).
+Still to come: `add`/`forget`, run history, local trash and the cross-platform `doctor`
+checks — see [the plan](docs/PLAN.md).

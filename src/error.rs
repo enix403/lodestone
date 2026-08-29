@@ -97,6 +97,15 @@ pub enum Error {
     NeedsResync(String),
 
     #[error(
+        "lodestone's built-in filter set changed since folder {0:?} was initialised, so \
+         bisync requires a new baseline.\n\
+         This is expected after a lodestone upgrade that adjusted the ignored-junk list.\n\
+         Nothing is lost — re-baseline with:\n\
+         \x20 lode resync {0} --i-understand"
+    )]
+    FilterSetChanged(String),
+
+    #[error(
         "syncing folder {0:?} would leave one side with no files at all, and rclone refuses \
          to sync to an empty directory.\n\
          This is rclone's own floor and is independent of --allow-deletes.\n\

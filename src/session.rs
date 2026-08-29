@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::plan::Plan;
 use crate::rclone::{Rclone, Version};
 use crate::snapshot::{Listing, Snapshot};
-use crate::{machine, paths};
+use crate::{filters, machine, paths};
 
 /// Substring rclone puts in the losing file's name when a conflict is materialised.
 /// Derived from bisync's default `--conflict-suffix`.
@@ -40,8 +40,11 @@ impl Session {
     pub fn new() -> Result<Self> {
         let rclone = Rclone::discover()?;
         let version = rclone.require_min_version()?;
+        // The same filter file is used for listing and for syncing, so the plan and the
+        // sync can never disagree about which files exist.
+        let filter_file = filters::write_file(&paths::cache_dir())?;
         Ok(Self {
-            rclone,
+            rclone: rclone.with_filters(filter_file.display().to_string()),
             machine_id: machine::machine_id()?,
             version,
         })
@@ -127,11 +130,26 @@ impl Session {
             return Error::EmptySide(f.name.clone());
         }
         if stderr.contains("must run --resync") || stderr.contains("Must run --resync") {
+            // The most likely reason is that lodestone's compiled-in filter set changed
+            // between versions. Say so, instead of leaving the user to guess.
+            if self.filters_changed(f) {
+                return Error::FilterSetChanged(f.name.clone());
+            }
             return Error::NeedsResync(f.name.clone());
         }
         Error::RcloneFailed {
             code: *code,
             stderr: stderr.clone(),
+        }
+    }
+
+    /// Whether the active filter set differs from the one recorded in the snapshot.
+    /// A snapshot predating filtering has an empty fingerprint and also counts as changed.
+    fn filters_changed(&self, f: &Folder) -> bool {
+        match Snapshot::load(&f.name, &self.machine_id) {
+            Ok(s) => s.filters != filters::fingerprint(),
+            // If the snapshot cannot be read we cannot claim filters are the cause.
+            Err(_) => false,
         }
     }
 }

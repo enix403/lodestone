@@ -56,7 +56,8 @@ Delivered:
   specific failure code.
 - Expected bisync failures mapped to actionable errors instead of raw rclone text: stale
   lock, workdir filename too long, and the empty-side refusal.
-- `lode unlock` (pulled forward from Step 3 — it is what makes the stale-lock error
+- `lode unlock` (pulled forward from the advisory-lock step — it is what makes the
+  stale-lock error
   actionable rather than a dead end).
 - 11 new e2e tests covering reorg-as-moves, idempotence, both directional assertions,
   dry-run, the delete guard and its override, conflict abort, fan-out isolation, and
@@ -71,7 +72,31 @@ previous snapshot intact and the next plan simply sees the partially-applied sta
 ordinary changes, so the design is already self-healing here; the remaining gap is bisync's
 own lock file, which `lode unlock` now handles.
 
-## Step 3 — lodestone's own advisory lock
+## Step 3 — Filters ✅ DONE
+
+Taken out of order deliberately. Introducing filters later changes bisync's filter
+fingerprint and forces a `--resync` on every folder on every machine, so the cost grows
+with every folder initialised. Doing it while there is essentially one folder costs
+nothing. On a mixed macOS/Linux fleet `.DS_Store` pollution is a certainty, not a risk.
+
+Delivered:
+
+- `filters` — 12 compiled-in exclusions covering macOS, Linux desktop and Windows junk,
+  with an FNV-1a fingerprint over the rendered rules (TDD §9.1).
+- Applied to **both** sides of the tool: `--filter-from` on `lsjson` and `--filters-file`
+  on bisync, so the plan and the sync can never disagree about which files exist.
+- Fingerprint recorded in every snapshot; when bisync demands a resync, lodestone compares
+  and reports that the built-in filter set changed rather than passing rclone's demand
+  through.
+- `lode doctor` reports the active rule count and fingerprint.
+- 5 unit + 3 e2e tests.
+
+**Bug found and fixed:** `lode init` talked to rclone directly rather than through
+`Session`, so it baselined *unfiltered* while every later run was filtered — making bisync
+demand a resync on the very next command, for every folder. `init` now goes through
+`Session` like everything else. The end-to-end tests caught this; no unit test would have.
+
+## Step 4 — lodestone's own advisory lock
 
 Prevents two terminals racing before rclone is ever invoked.
 
@@ -79,14 +104,14 @@ Prevents two terminals racing before rclone is ever invoked.
 - Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
 - Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
 
-## Step 4 — Local trash
+## Step 5 — Local trash
 
 Deletions must be recoverable without going to Drive's web UI.
 
 - `--backup-dir1` into `$XDG_STATE_HOME/lode/trash/<folder>/<timestamp>/`.
 - `lode trash list|restore|prune`. No `--backup-dir2` (TDD §6.4).
 
-## Step 5 — `add` and `forget`
+## Step 6 — `add` and `forget`
 
 Completes onboarding to a single command.
 
@@ -96,7 +121,7 @@ Completes onboarding to a single command.
 - `lode forget <name>` — remove config stanza and local state; never touch files; say so
   explicitly; `--purge-state` for the trash directory.
 
-## Step 6 — Run history and logging
+## Step 7 — Run history and logging
 
 Interactive-first, since there is no daemon whose logs you would read after the fact.
 
@@ -105,12 +130,6 @@ Interactive-first, since there is no daemon whose logs you would read after the 
 - A run log (timestamp, command, plan counts, outcome, duration, exit code) behind
   `lode log` / `lode log --show <id>`. Rotate by count and age.
 - `lode diff <folder>` — the verbose per-file plan.
-
-## Step 7 — Filters
-
-- Compiled-in OS-junk list (TDD §9.1), applied via `--filter-from`.
-- Fingerprint the filter set into the snapshot so a change explains *why* bisync demands a
-  resync instead of letting rclone say it cryptically.
 
 ## Step 8 — Cross-platform `doctor` checks
 

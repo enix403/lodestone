@@ -61,6 +61,12 @@ pub struct Snapshot {
     pub machine_id: String,
     /// RFC3339 timestamp of the sync that produced this snapshot.
     pub taken_at: String,
+    /// Fingerprint of the filter set in force when this snapshot was taken. bisync
+    /// demands a resync when its filters change; recording this lets lodestone explain
+    /// *why* rather than passing rclone's cryptic demand through. Empty for snapshots
+    /// written before filtering existed.
+    #[serde(default)]
+    pub filters: String,
     /// The agreed state of both sides after that sync.
     pub entries: Listing,
 }
@@ -74,6 +80,7 @@ impl Snapshot {
             folder: folder.to_string(),
             machine_id: machine_id.to_string(),
             taken_at: now_rfc3339(),
+            filters: crate::filters::fingerprint(),
             entries,
         }
     }

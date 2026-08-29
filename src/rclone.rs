@@ -100,6 +100,10 @@ fn flatten(p: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct Rclone {
     pub binary: PathBuf,
+    /// Path to the compiled-in OS-junk filter file. Applied to *both* listing and sync:
+    /// if the plan phase saw files that bisync then filtered out, the two would disagree
+    /// about what changed.
+    pub filter_file: Option<String>,
 }
 
 /// Raw `lsjson` record. Only the fields lodestone needs are declared.
@@ -128,7 +132,10 @@ impl Rclone {
             if !p.exists() {
                 return Err(Error::RcloneMissing);
             }
-            return Ok(Self { binary: p });
+            return Ok(Self {
+                binary: p,
+                filter_file: None,
+            });
         }
         let ok = Command::new("rclone")
             .arg("--version")
@@ -140,10 +147,17 @@ impl Rclone {
         if ok {
             Ok(Self {
                 binary: PathBuf::from("rclone"),
+                filter_file: None,
             })
         } else {
             Err(Error::RcloneMissing)
         }
+    }
+
+    /// Attach the filter file used for every subsequent listing and sync.
+    pub fn with_filters(mut self, path: impl Into<String>) -> Self {
+        self.filter_file = Some(path.into());
+        self
     }
 
     fn run(&self, args: &[&str]) -> Result<String> {
@@ -193,15 +207,21 @@ impl Rclone {
     /// algorithm (blake3, sha512, whirlpool, ...), which on a local path means reading
     /// every file many times over.
     pub fn lsjson(&self, path: &str) -> Result<Listing> {
-        let raw = self.run(&[
+        let mut args = vec![
             "lsjson",
             "--recursive",
             "--files-only",
             "--hash",
             "--hash-type",
             HASH_TYPE,
-            path,
-        ])?;
+        ];
+        // `lsjson` has no --filters-file; --filter-from is the equivalent.
+        if let Some(f) = &self.filter_file {
+            args.push("--filter-from");
+            args.push(f);
+        }
+        args.push(path);
+        let raw = self.run(&args)?;
         let items: Vec<LsJsonItem> = serde_json::from_str(&raw)?;
         Ok(items
             .into_iter()
@@ -214,8 +234,8 @@ impl Rclone {
     }
 
     /// Flags shared by every bisync invocation. See the module docs for `--force`.
-    pub fn bisync_base_args<'a>(&self, workdir: &'a str) -> Vec<&'a str> {
-        vec![
+    pub fn bisync_base_args<'a>(&'a self, workdir: &'a str) -> Vec<&'a str> {
+        let mut args = vec![
             "bisync",
             "--workdir",
             workdir,
@@ -232,7 +252,14 @@ impl Rclone {
             "none",
             "--stats",
             "0",
-        ]
+        ];
+        // bisync has its own --filters-file, which is what it fingerprints to decide
+        // whether a resync is required.
+        if let Some(f) = &self.filter_file {
+            args.push("--filters-file");
+            args.push(f);
+        }
+        args
     }
 
     /// Run bisync with the given path pair and extra flags, returning combined output.
@@ -347,6 +374,7 @@ mod tests {
     fn base_args_disable_rclone_guard_and_enable_rename_tracking() {
         let r = Rclone {
             binary: "rclone".into(),
+            filter_file: None,
         };
         let args = r.bisync_base_args("/tmp/wd");
         assert!(args.contains(&"--force"));
@@ -357,5 +385,23 @@ mod tests {
             !args.contains(&"--resilient"),
             "recovery must be manual and loud"
         );
+        // Without a filter file configured, no filter flag may appear — an empty
+        // --filters-file would change bisync's fingerprint and force a resync.
+        assert!(!args.contains(&"--filters-file"));
+    }
+
+    #[test]
+    fn filters_are_passed_to_bisync_when_configured() {
+        let r = Rclone {
+            binary: "rclone".into(),
+            filter_file: None,
+        }
+        .with_filters("/cache/filters.txt");
+        let args = r.bisync_base_args("/tmp/wd");
+        let i = args
+            .iter()
+            .position(|a| *a == "--filters-file")
+            .expect("filter flag missing");
+        assert_eq!(args[i + 1], "/cache/filters.txt");
     }
 }
