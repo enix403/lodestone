@@ -379,6 +379,26 @@ With no folder argument, commands operate on **every** configured folder: sequen
 conflict in one must not block another. The command exits with the most specific failure
 code and prints a summary that is impossible to miss.
 
+### 6.7 rclone's own floor: a side may never become empty *(empirically verified)*
+
+Independently of everything above, rclone refuses to sync when one side's current listing
+is empty:
+
+```
+ERROR : Empty current Path1 listing. Cannot sync to an empty directory: ...
+ERROR : Bisync critical error: empty current Path1 listing
+ERROR : Bisync aborted. Must run --resync to recover.
+```
+
+**`--force` does not lift this**, and neither does lodestone's `--allow-deletes`. It is a
+hard floor below both guards, which means even a deliberate override cannot wipe a folder
+by accident — emptying one requires a conscious re-baseline.
+
+lodestone detects this specific abort and reports the cause and the escape route, rather
+than passing rclone's wording through. The same mapping exists for two other expected
+bisync failures: a stale lock from an interrupted run (→ `lode unlock`), and a
+workdir filename that is too long (§9, item 5).
+
 ---
 
 ## 7. Configuration and state
@@ -533,12 +553,14 @@ glibc and is always correct.)
 5. Very deep local paths can breach bisync's workdir filename limit (§9, item 5).
 6. Remote-side rename detection relies on content hashes; a backend that serves no hashes
    degrades to delete+create.
+7. A folder cannot be emptied through `sync`/`push`/`pull` at all — rclone refuses, and
+   `--allow-deletes` does not help (§6.7). Emptying requires a deliberate re-baseline.
 
 ---
 
 ## 13. Implementation status
 
-Implemented and tested end-to-end (41 tests, unit + e2e against real rclone):
+Implemented and tested end-to-end (52 tests: 35 unit + 17 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -546,10 +568,13 @@ Implemented and tested end-to-end (41 tests, unit + e2e against real rclone):
 - snapshot store with atomic writes
 - **the plan engine**: three-way delta, symmetric hash-based rename matching, conflict
   detection, delete guard, directional assertions
-- `lode init`, `lode status` (text + `--json`), `lode folders`, `lode doctor`,
-  `lode doctor rename-test`
+- **the apply phase**: `sync` / `push` / `pull` with `--dry-run` and `--allow-deletes`,
+  plan-all-then-apply fan-out with per-folder failure isolation, snapshot advanced only on
+  success, actionable mapping of expected bisync failures
+- `lode init`, `lode status` (text + `--json`), `lode folders`, `lode unlock`,
+  `lode doctor`, `lode doctor rename-test`
 
-Not yet implemented: the **apply phase** (`sync`/`push`/`pull`), `add`/`forget`,
-`log`/`diff`, trash, locking, filters, and the cross-platform `doctor` checks in §9.
+Not yet implemented: `add`/`forget`, `log`/`diff`, trash, lodestone's own advisory lock,
+filters, and the cross-platform `doctor` checks in §9.
 
 See `docs/PLAN.md`.

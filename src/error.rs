@@ -83,6 +83,28 @@ pub enum Error {
     #[error("{0}")]
     Assertion(String),
 
+    #[error(
+        "folder {0:?} has a stale bisync lock: a previous run was interrupted.\n\
+         Make sure no other `lode` is running, then clear it with `lode unlock {0}`."
+    )]
+    StaleLock(String),
+
+    #[error(
+        "bisync refuses to run for folder {0:?} without a new baseline.\n\
+         Review `lode status {0}`, then re-baseline deliberately with:\n\
+         \x20 lode resync {0} --i-understand"
+    )]
+    NeedsResync(String),
+
+    #[error(
+        "syncing folder {0:?} would leave one side with no files at all, and rclone refuses \
+         to sync to an empty directory.\n\
+         This is rclone's own floor and is independent of --allow-deletes.\n\
+         If emptying it is genuinely what you want, clear the other side directly, then:\n\
+         \x20 lode resync {0} --i-understand"
+    )]
+    EmptySide(String),
+
     #[error("io error at {path:?}: {source}")]
     Io {
         path: String,

@@ -38,7 +38,17 @@ lode doctor                 # check the environment
 lode doctor rename-test     # verify rename tracking on this machine, offline
 lode init silvermine        # establish the baseline
 lode status                 # what would happen — changes nothing
+lode push                   # send changes up (aborts if anything is coming down)
+lode pull                   # bring changes down (aborts if anything is going up)
+lode sync                   # both directions, no assertion
 ```
+
+With no folder argument, every configured folder is planned first and the combined summary
+printed before anything is touched. Add `--dry-run` to stop there.
+
+Nothing is applied unless the plan is clean. Conflicts abort (exit 10), an unexpected mass
+deletion aborts (exit 11, overridable per-run with `--allow-deletes N`), and a violated
+directional assertion aborts (exit 12).
 
 `~/.config/lode/config.toml`:
 
@@ -58,5 +68,8 @@ live in a dotfiles repo.
 
 ## Status
 
-Early. The plan engine, `init`, `status`, `folders` and `doctor` work end to end. The apply
-phase (`sync`/`push`/`pull`) is next — see the plan.
+Usable. The plan engine and the apply phase both work end to end, covered by 52 tests
+including 17 that drive the real binary against real rclone with no network.
+
+Still to come: `add`/`forget`, run history, local trash, filters and the cross-platform
+`doctor` checks — see [the plan](docs/PLAN.md).

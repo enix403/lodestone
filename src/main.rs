@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use lodestone::error::ExitCode;
+use lodestone::plan::Direction;
 use lodestone::{config::Config, Error, Result};
 use std::path::PathBuf;
 
@@ -28,6 +29,22 @@ struct Cli {
     command: Cmd,
 }
 
+/// Flags shared by the three mutating commands.
+#[derive(Args)]
+struct SyncArgs {
+    /// Folder name, or `.` for the folder containing the current directory.
+    /// Omit to operate on every configured folder.
+    target: Option<String>,
+
+    /// Plan and report, but change nothing
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Raise the true-delete ceiling for this run only
+    #[arg(long, value_name = "N")]
+    allow_deletes: Option<usize>,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// List configured folders
@@ -40,9 +57,24 @@ enum Cmd {
         target: Option<String>,
     },
 
+    /// Synchronise in both directions
+    Sync(SyncArgs),
+
+    /// Send local changes up; aborts if the remote has changes to bring down
+    Push(SyncArgs),
+
+    /// Bring remote changes down; aborts if there are local changes to send up
+    Pull(SyncArgs),
+
     /// Establish the baseline for a folder: resync, then record the snapshot
     Init {
         /// Folder name. Omit to initialise every configured folder.
+        target: Option<String>,
+    },
+
+    /// Clear a bisync lock left behind by an interrupted run
+    Unlock {
+        /// Folder name. Omit for every configured folder.
         target: Option<String>,
     },
 
@@ -81,15 +113,36 @@ fn run(cli: &Cli) -> Result<ExitCode> {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::status::run(&cfg, target.as_deref(), cli.json)
         }
+        Cmd::Sync(a) => mutate(cli, a, Direction::Both),
+        Cmd::Push(a) => mutate(cli, a, Direction::Push),
+        Cmd::Pull(a) => mutate(cli, a, Direction::Pull),
         Cmd::Init { target } => {
             let cfg = Config::load(cli.config.as_deref())?;
             cmd::init::run(&cfg, target.as_deref())
+        }
+        Cmd::Unlock { target } => {
+            let cfg = Config::load(cli.config.as_deref())?;
+            cmd::unlock::run(&cfg, target.as_deref())
         }
         Cmd::Doctor { sub } => match sub {
             None => cmd::doctor::run(cli.config.as_deref()),
             Some(DoctorCmd::RenameTest) => cmd::rename_test::run(),
         },
     }
+}
+
+fn mutate(cli: &Cli, a: &SyncArgs, direction: Direction) -> Result<ExitCode> {
+    let cfg = Config::load(cli.config.as_deref())?;
+    cmd::apply::run(
+        &cfg,
+        a.target.as_deref(),
+        &cmd::apply::Options {
+            direction,
+            json: cli.json,
+            dry_run: a.dry_run,
+            allow_deletes: a.allow_deletes,
+        },
+    )
 }
 
 /// Resolve a CLI target into the folders to operate on.

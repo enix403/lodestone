@@ -40,27 +40,44 @@ Delivered:
 
 ---
 
-## Step 2 — The apply phase: `sync`, `push`, `pull`
+## Step 2 — The apply phase: `sync`, `push`, `pull` ✅ DONE
 
 The other half of two-phase execution, and the first code that mutates data.
 
-- Run bisync with the flags in `Rclone::bisync_base_args` after the plan passes its gates.
-- Rewrite the snapshot from a post-sync listing, **only** on success.
-- `--allow-deletes N` and `--dry-run` on all three.
-- Ctrl-C: forward SIGINT, let bisync journal, mark the snapshot stale so the next run
-  rescans rather than trusting a half-applied state.
-- Fan-out: plan every folder, print one combined summary, then apply only the clean ones;
-  isolate failures; exit with the most specific code.
-- e2e tests: reorganise → `push` → assert server-side moves and a correct new snapshot;
-  remote change → `push` refuses with exit 12; conflict → nothing is written.
+Delivered:
 
-## Step 3 — Locking and crash safety
+- `session` — binds rclone and machine identity to `plan()` and `apply()`, so the preview a
+  user sees and the gate on the mutation are the same code.
+- `sync` / `push` / `pull`, differing only in the asserted direction; `--dry-run` and
+  `--allow-deletes N` on all three.
+- Snapshot rewritten from a post-sync listing **only** on success.
+- Plan-all-then-apply fan-out: the combined summary is printed before anything mutates, a
+  clean folder still syncs when a sibling is blocked, and the run exits with the most
+  specific failure code.
+- Expected bisync failures mapped to actionable errors instead of raw rclone text: stale
+  lock, workdir filename too long, and the empty-side refusal.
+- `lode unlock` (pulled forward from Step 3 — it is what makes the stale-lock error
+  actionable rather than a dead end).
+- 11 new e2e tests covering reorg-as-moves, idempotence, both directional assertions,
+  dry-run, the delete guard and its override, conflict abort, fan-out isolation, and
+  unlock.
 
-Prevents two terminals racing, and makes interruption recoverable.
+**Finding:** rclone refuses to sync when one side's listing is empty, and neither `--force`
+nor `--allow-deletes` lifts it. A folder therefore cannot be emptied through the normal
+commands at all — a hard floor beneath both guards. See TDD §6.7.
 
-- Per-folder advisory lock under `XDG_STATE_HOME` holding pid + hostname + start time.
-- Stale detection (pid gone → offer to clear); `lode unlock`.
-- Snapshot "stale" flag honoured by the plan phase.
+**Deliberately deferred from this step:** SIGINT forwarding. An interrupted run leaves the
+previous snapshot intact and the next plan simply sees the partially-applied state as
+ordinary changes, so the design is already self-healing here; the remaining gap is bisync's
+own lock file, which `lode unlock` now handles.
+
+## Step 3 — lodestone's own advisory lock
+
+Prevents two terminals racing before rclone is ever invoked.
+
+- Per-folder lock under `XDG_STATE_HOME` holding pid + hostname + start time.
+- Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
+- Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
 
 ## Step 4 — Local trash
 
