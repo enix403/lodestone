@@ -13,6 +13,7 @@
 use crate::cmd::render::{plan_json, render_plan, worse};
 use lodestone::config::{Config, Folder};
 use lodestone::error::ExitCode;
+use lodestone::lock::Lock;
 use lodestone::plan::{Direction, Plan};
 use lodestone::session::Session;
 use lodestone::{runlog, timestamp, Error, Result};
@@ -94,6 +95,21 @@ pub fn run(cfg: &Config, target: Option<&str>, opts: &Options) -> Result<ExitCod
             results.push((*f, Ok(None)));
             continue;
         }
+        // Held only across the mutation. Taking it earlier would block a concurrent
+        // read-only plan for no benefit; the guard releases on drop either way.
+        let _lock = match Lock::acquire(&f.name) {
+            Ok(l) => l,
+            Err(e) => {
+                worst = worse(worst, e.exit_code());
+                record(f, opts, "skipped", &summary, &e.to_string(), started, None);
+                // Full message, not just the first line: unlike a gate failure this was
+                // never printed during the plan phase, and the advice it carries — that
+                // the other run is alive and its lock must NOT be cleared — is the whole
+                // point of the message.
+                results.push((*f, Err(SkipOrFail::Skipped(e.to_string()))));
+                continue;
+            }
+        };
         match session.apply(f) {
             Ok(applied) => {
                 record(f, opts, "applied", &summary, "", started, Some(&applied));
@@ -137,7 +153,17 @@ pub fn run(cfg: &Config, target: Option<&str>, opts: &Options) -> Result<ExitCod
                     worst = worse(worst, ExitCode::Conflict);
                 }
             }
-            Err(SkipOrFail::Skipped(why)) => println!("  {:<16} skipped — {why}", f.name),
+            Err(SkipOrFail::Skipped(why)) => {
+                let mut lines = why.lines();
+                println!(
+                    "  {:<16} skipped — {}",
+                    f.name,
+                    lines.next().unwrap_or_default()
+                );
+                for line in lines {
+                    println!("  {:<16}   {line}", "");
+                }
+            }
             Err(SkipOrFail::Failed(e)) => {
                 println!("  {:<16} FAILED — {}", f.name, first_line(&e.to_string()))
             }

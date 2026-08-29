@@ -106,6 +106,16 @@ pub enum Error {
     Assertion(String),
 
     #[error(
+        "folder {folder:?} is already being synced by another `lode` (pid {pid}, since {since}).\n\
+         Wait for it to finish. It is still running, so do NOT clear the lock."
+    )]
+    LockHeld {
+        folder: String,
+        pid: u32,
+        since: String,
+    },
+
+    #[error(
         "folder {0:?} has a stale bisync lock: a previous run was interrupted.\n\
          Make sure no other `lode` is running, then clear it with `lode unlock {0}`."
     )]

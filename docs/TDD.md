@@ -1,6 +1,6 @@
 # lodestone — Technical Design Document
 
-**Status:** accepted, partially implemented
+**Status:** accepted, implemented
 **Binary:** `lode`
 **Language:** Rust
 **Platforms:** macOS and Linux (both are hard requirements)
@@ -424,7 +424,31 @@ remote-only, differing, identical — and needs no snapshot. Content that cannot
 (no hash on either side) is reported as *differing*, since claiming a match without evidence
 is the unsafe direction.
 
-### 6.6 Exit codes
+### 6.6 Concurrency
+
+Mutating runs take a per-folder advisory lock, released on drop so an early return or a
+panic cannot leave it behind. Read-only commands (`status`, `compare`, `log`) do not take
+it — several at once are harmless.
+
+bisync has its own lock, so two concurrent runs were never going to corrupt anything; the
+second aborted. But it aborted with `prior lock file found`, which lodestone reports as a
+*stale* lock and tells you to clear with `lode unlock`. That advice is actively wrong when
+the other run is alive and simply still working, and following it would remove a lock doing
+its job. The advisory lock exists to give that case an honest message before rclone is
+invoked at all.
+
+A lock whose recorded pid is dead is reclaimed automatically — the run that held it is gone,
+so there is nothing to protect. A lock recorded by a *different host* is never reclaimed: a
+pid from another machine says nothing about a process here. A lock file that is empty or
+unparseable (a crash between create and write) is treated as reclaimable rather than
+wedging the folder forever.
+
+**SIGINT forwarding proved unnecessary.** The design inherited it from the daemon plan,
+where lodestone would have been the sole signal recipient. For a foreground CLI the
+terminal delivers SIGINT to the entire foreground process group, so rclone receives it
+directly and can journal. Verified.
+
+### 6.7 Exit codes
 
 Part of the public contract, so wrapper scripts can branch on them (retry a 13, never
 retry a 10):
@@ -439,7 +463,7 @@ retry a 10):
 | 12 | aborted: directional assertion violated |
 | 13 | rclone failed / remote unreachable |
 
-### 6.7 Fan-out
+### 6.8 Fan-out
 
 With no folder argument, commands operate on **every** configured folder: sequentially
 (interleaved rclone output is unreadable and parallel transfers contend for one uplink),
@@ -447,7 +471,7 @@ With no folder argument, commands operate on **every** configured folder: sequen
 conflict in one must not block another. The command exits with the most specific failure
 code and prints a summary that is impossible to miss.
 
-### 6.8 rclone's own floor: a side may never become empty *(empirically verified)*
+### 6.9 rclone's own floor: a side may never become empty *(empirically verified)*
 
 Independently of everything above, rclone refuses to sync when one side's current listing
 is empty:
@@ -498,6 +522,7 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 |---|---|
 | `$XDG_STATE_HOME/lode/machine.id` | this machine's identity |
 | `$XDG_STATE_HOME/lode/folders/<name>/snapshot.json` | the merge base |
+| `$XDG_STATE_HOME/lode/folders/<name>/lock` | held during a mutating run |
 | `$XDG_STATE_HOME/lode/trash/<name>/<run>/` | locally-destroyed files, recoverable |
 | `$XDG_STATE_HOME/lode/logs/<name>/<id>.log` | raw rclone output, newest 50 per folder |
 | `$XDG_STATE_HOME/lode/runs.jsonl` | run history |
@@ -671,7 +696,7 @@ glibc and is always correct.)
 6. Remote-side rename detection relies on content hashes; a backend that serves no hashes
    degrades to delete+create.
 7. A folder cannot be emptied through `sync`/`push`/`pull` at all — rclone refuses, and
-   `--allow-deletes` does not help (§6.8). Emptying requires a deliberate re-baseline.
+   `--allow-deletes` does not help (§6.9). Emptying requires a deliberate re-baseline.
 
 ---
 
@@ -737,7 +762,7 @@ because the history could not be written would be absurd.
 `lode diff` was dropped from the design. `status` already lists every affected path, and
 `compare` covers the snapshot-free case, so `diff` would have duplicated one or the other.
 
-Implemented and tested end-to-end (142 tests: 92 unit + 50 e2e against real rclone):
+Implemented and tested end-to-end (152 tests: 99 unit + 53 e2e against real rclone):
 
 - config loading, two-layer merge, validation
 - XDG paths, state-inside-synced-folder refusal, machine identity and foreign-snapshot refusal
@@ -767,7 +792,9 @@ Implemented and tested end-to-end (142 tests: 92 unit + 50 e2e against real rclo
   re-baselining, and **`lode compare`**, the snapshot-free two-way diff (§6.5)
 
 - **run history and logging**: `lode log`, raw rclone output per run, rotation
+- **per-folder advisory lock** for mutating runs (§6.6)
 
-Not yet implemented: lodestone's own advisory lock.
+Every item in the original design is now implemented, except distribution (§11), which is
+deferred by choice.
 
 See `docs/PLAN.md`.

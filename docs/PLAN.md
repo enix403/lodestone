@@ -194,13 +194,32 @@ directory pairs cannot prove:
 A fourth, cosmetic, was found while writing the config: the generated header landed at the
 bottom of a new file.
 
-## Step 7 — lodestone's own advisory lock
+## Step 7 — Advisory lock ✅ DONE
 
-Prevents two terminals racing before rclone is ever invoked.
+Delivered:
 
-- Per-folder lock under `XDG_STATE_HOME` holding pid + hostname + start time.
-- Stale detection (pid gone → offer to clear), folded into the existing `lode unlock`.
-- Forward SIGINT to rclone so bisync can journal, rather than dying at SIGKILL.
+- `lock` — per-folder advisory lock taken for mutating runs only, released on drop so an
+  early return or panic cannot leave it behind.
+- A live holder is refused with an honest message; a **dead** holder is reclaimed
+  automatically; a holder from **another host** is never reclaimed, since its pid says
+  nothing about a process here; an empty or unparseable lock file is reclaimable rather
+  than wedging the folder.
+- `lode unlock` clears both this lock and bisync's, naming who held it.
+- 7 unit + 3 e2e tests.
+
+**Why it was worth doing even though bisync already locks:** bisync's abort says
+`prior lock file found`, which lodestone reported as a *stale* lock with advice to run
+`lode unlock`. That advice is wrong when the other run is alive, and following it would
+remove a lock that is working.
+
+**Dropped: SIGINT forwarding.** Inherited from the daemon design, where lodestone would
+have been the sole signal recipient. For a foreground CLI the terminal delivers SIGINT to
+the whole foreground process group, so rclone already receives it and can journal. Verified
+rather than assumed.
+
+**Bug caught by its own test:** the fan-out summary truncated a skip reason to its first
+line, which dropped exactly the part telling you *not* to clear a live lock. Skip reasons
+are now printed in full.
 
 ## Step 8 — Run history and logging ✅ DONE
 

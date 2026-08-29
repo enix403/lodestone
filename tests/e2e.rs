@@ -1451,3 +1451,93 @@ fn log_is_empty_before_anything_runs() {
     w.seed("inbox", 1);
     assert!(w.stdout(&["log"]).contains("no runs recorded yet"));
 }
+
+#[test]
+fn a_live_lock_blocks_a_mutating_run_with_honest_advice() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::write(w.local.join("inbox/new.pdf"), b"pending").unwrap();
+
+    // Simulate another lode still working: this test process is certainly alive.
+    let lock = w.root.join("state/lode/folders/docs/lock");
+    let holder = serde_json::json!({
+        "pid": std::process::id(),
+        "host": hostname(),
+        "at": 1_788_000_000u64,
+    });
+    std::fs::write(&lock, serde_json::to_string(&holder).unwrap()).unwrap();
+
+    let out = w.run(&["push"]);
+    assert!(!out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("already being synced"), "{text}");
+    // Crucially it must NOT tell the user to clear a lock that is doing its job.
+    assert!(text.contains("do NOT clear"), "{text}");
+    assert!(
+        !w.remote_of("docs").join("inbox/new.pdf").exists(),
+        "nothing applied"
+    );
+
+    // Once the holder is gone, the run proceeds.
+    std::fs::remove_file(&lock).unwrap();
+    assert_ok(&w.run(&["push"]), "push after the lock is released");
+    assert!(w.remote_of("docs").join("inbox/new.pdf").exists());
+}
+
+#[test]
+fn a_lock_left_by_a_dead_process_does_not_wedge_the_folder() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::write(w.local.join("inbox/new.pdf"), b"pending").unwrap();
+
+    // A run killed mid-flight leaves a lock naming a pid that no longer exists.
+    let holder = serde_json::json!({ "pid": 2_000_000_000u32, "host": hostname(), "at": 1u64 });
+    std::fs::write(
+        w.root.join("state/lode/folders/docs/lock"),
+        serde_json::to_string(&holder).unwrap(),
+    )
+    .unwrap();
+
+    assert_ok(&w.run(&["push"]), "a dead holder must be reclaimed");
+    assert!(w.remote_of("docs").join("inbox/new.pdf").exists());
+}
+
+#[test]
+fn a_normal_run_leaves_no_lock_behind() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+    std::fs::write(w.local.join("inbox/new.pdf"), b"x").unwrap();
+    assert_ok(&w.run(&["push"]), "push");
+    assert!(!w.root.join("state/lode/folders/docs/lock").exists());
+    assert!(w.stdout(&["unlock", "docs"]).contains("no lock held"));
+}
+
+fn hostname() -> String {
+    let out = Command::new("hostname").output().expect("hostname");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
