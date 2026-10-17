@@ -67,8 +67,8 @@ pub fn fingerprint() -> String {
 
 /// Materialise the filter file, returning its path.
 ///
-/// Written once per run into the cache directory. Content is what matters to rclone —
-/// bisync hashes the rules, not the path.
+/// Written once per run into [`crate::paths::filters_dir`]. Content is what matters to
+/// rclone — bisync hashes the rules, not the path.
 pub fn write_file(dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).map_err(|e| Error::io(dir.display(), e))?;
     let path = dir.join("filters.txt");

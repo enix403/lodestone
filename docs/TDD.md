@@ -384,7 +384,7 @@ Verified behaviour when each piece goes missing:
 |---|---|
 | `folders/<name>/snapshot.json` | every command refuses with `no snapshot yet`; recoverable only by re-baselining |
 | `machine.id` | a new id is generated, the snapshot no longer matches it, and every command refuses |
-| `$XDG_CACHE_HOME/lode/bisync/<name>/*.lst` | bisync demands a new baseline (`NeedsResync`) |
+| `folders/<name>/bisync/*.lst` or `filters.txt.md5` | bisync demands a new baseline (`NeedsResync`) |
 
 **The trap is what re-baselining does.** A resync *unions* both sides — it copies each
 side's files to the other and deletes nothing. So if the snapshot is lost while changes
@@ -526,7 +526,12 @@ Precedence: CLI flags > `LODE_*` env > `config.local.toml` > `config.toml` > def
 | `$XDG_STATE_HOME/lode/trash/<name>/<run>/` | locally-destroyed files, recoverable |
 | `$XDG_STATE_HOME/lode/logs/<name>/<id>.log` | raw rclone output, newest 50 per folder |
 | `$XDG_STATE_HOME/lode/runs.jsonl` | run history |
-| `$XDG_CACHE_HOME/lode/bisync/<name>/` | bisync's own listings and locks |
+| `$XDG_STATE_HOME/lode/folders/<name>/bisync/` | bisync's own listings and locks |
+| `$XDG_STATE_HOME/lode/filters.txt{,.md5}` | the built-in filter file and bisync's hash of it |
+
+`$XDG_CACHE_HOME/lode` holds only `rename-test` scratch space and is safe to empty at any
+time. Earlier versions kept the bisync workdir and filter file there; they are moved into
+state automatically on the next run.
 
 ---
 

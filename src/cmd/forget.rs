@@ -34,7 +34,12 @@ pub fn run(
     if keep_state {
         println!("{name}: local state kept (--keep-state)");
     } else {
-        for dir in [paths::folder_state_dir(name), paths::bisync_workdir(name)] {
+        // The bisync workdir sits inside the folder's state dir; the legacy cache
+        // location is cleaned up too, in case it was never migrated.
+        for dir in [
+            paths::folder_state_dir(name),
+            paths::legacy_bisync_workdir(name),
+        ] {
             if dir.exists() {
                 std::fs::remove_dir_all(&dir).map_err(|e| Error::io(dir.display(), e))?;
                 println!("{name}: removed state {}", dir.display());

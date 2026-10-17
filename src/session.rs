@@ -46,7 +46,8 @@ impl Session {
         let version = rclone.require_min_version()?;
         // The same filter file is used for listing and for syncing, so the plan and the
         // sync can never disagree about which files exist.
-        let filter_file = filters::write_file(&paths::cache_dir())?;
+        paths::migrate_filters_hash()?;
+        let filter_file = filters::write_file(&paths::filters_dir())?;
         Ok(Self {
             rclone: rclone.with_filters(filter_file.display().to_string()),
             machine_id: machine::machine_id()?,

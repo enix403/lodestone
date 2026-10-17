@@ -578,13 +578,63 @@ fn unlock_clears_a_leftover_bisync_lock() {
     w.seed("inbox", 1);
     assert_ok(&w.run(&["init"]), "init");
 
-    let workdir = w.root.join("cache/lode/bisync/docs");
+    let workdir = w.root.join("state/lode/folders/docs/bisync");
     let lock = workdir.join("leftover.lck");
     std::fs::write(&lock, "pid 12345").unwrap();
 
     assert!(w.stdout(&["unlock", "docs"]).contains("cleared"));
     assert!(!lock.exists());
     assert!(w.stdout(&["unlock", "docs"]).contains("no lock held"));
+}
+
+#[test]
+fn emptying_the_cache_does_not_lose_the_baseline() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Nothing should be there to lose, but empty it regardless of what exists.
+    let _ = std::fs::remove_dir_all(w.root.join("cache"));
+    std::fs::write(w.local.join("inbox/new.pdf"), b"new").unwrap();
+
+    assert_ok(&w.run(&["sync"]), "sync after emptying the cache");
+    assert!(w.remote_of("docs").join("inbox/new.pdf").exists());
+}
+
+#[test]
+fn a_workdir_in_the_old_cache_location_is_migrated() {
+    if !rclone_available() {
+        eprintln!("skipping: rclone not installed");
+        return;
+    }
+    let w = World::new();
+    w.seed("inbox", 2);
+    assert_ok(&w.run(&["init"]), "init");
+
+    // Put the workdir and filter hash back where older versions kept them.
+    let new = w.root.join("state/lode/folders/docs/bisync");
+    let old = w.root.join("cache/lode/bisync/docs");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::rename(&new, &old).unwrap();
+    std::fs::rename(
+        w.root.join("state/lode/filters.txt.md5"),
+        w.root.join("cache/lode/filters.txt.md5"),
+    )
+    .unwrap();
+
+    // A read-only command with nothing to sync must still migrate: it never reaches
+    // bisync, so this is the case a migration tied to the apply phase would miss.
+    assert_ok(&w.run(&["status"]), "status with a legacy workdir");
+    assert!(new.is_dir());
+    assert!(!old.exists());
+
+    std::fs::write(w.local.join("inbox/new.pdf"), b"new").unwrap();
+    assert_ok(&w.run(&["sync"]), "sync after migration");
+    assert!(w.remote_of("docs").join("inbox/new.pdf").exists());
 }
 
 // ---------------------------------------------------------------------------

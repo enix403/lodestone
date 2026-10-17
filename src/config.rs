@@ -159,6 +159,11 @@ impl Config {
 
         let cfg = Config { folders };
         cfg.validate_state_not_synced()?;
+        // Every command loads the config, so this is the one place that reliably sees
+        // every folder — including runs that never reach bisync because nothing changed.
+        for f in &cfg.folders {
+            paths::migrate_bisync_workdir(&f.name)?;
+        }
         Ok(cfg)
     }
 
